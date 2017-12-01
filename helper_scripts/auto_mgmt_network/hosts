@@ -1,0 +1,77 @@
+# Created by Topology-Converter v4.6.5
+#    Template Revision: v4.6.5
+
+
+127.0.0.1 localhost 
+127.0.1.1 oob-mgmt-server
+
+192.168.200.254 oob-mgmt-server
+
+
+192.168.200.25 oob-mgmt-switch
+192.168.200.1 chassis02-lc1-1
+192.168.200.2 chassis03-lc1-1
+192.168.200.3 chassis02-fc1-1
+192.168.200.4 chassis02-lc1-2
+192.168.200.5 chassis02-fc3-1
+192.168.200.6 chassis03-lc3-1
+192.168.200.7 chassis02-lc2-2
+192.168.200.8 chassis02-fc2-1
+192.168.200.9 chassis02-lc2-1
+192.168.200.10 chassis04-lc3-1
+192.168.200.11 chassis04-fc1-1
+192.168.200.12 chassis03-fc4-1
+192.168.200.17 chassis04-lc2-1
+192.168.200.18 chassis03-lc2-1
+192.168.200.20 chassis01-fc4-1
+192.168.200.21 chassis01-fc1-1
+192.168.200.22 chassis02-lc3-1
+192.168.200.23 chassis04-lc3-2
+192.168.200.24 chassis03-lc1-2
+192.168.200.26 chassis01-fc3-1
+192.168.200.27 chassis02-lc4-1
+192.168.200.28 chassis02-lc4-2
+192.168.200.30 chassis03-lc3-2
+192.168.200.31 chassis04-fc3-1
+192.168.200.32 chassis04-lc2-2
+192.168.200.33 chassis01-fc2-1
+192.168.200.34 chassis04-fc2-1
+192.168.200.35 chassis04-fc4-1
+192.168.200.42 chassis02-lc3-2
+192.168.200.43 chassis03-fc2-1
+192.168.200.44 chassis01-lc1-2
+192.168.200.45 chassis03-fc3-1
+192.168.200.46 chassis01-lc1-1
+192.168.200.47 chassis04-lc1-2
+192.168.200.48 chassis04-lc1-1
+192.168.200.49 chassis03-fc1-1
+192.168.200.50 chassis03-lc2-2
+192.168.200.51 chassis01-lc4-2
+192.168.200.52 chassis01-lc4-1
+192.168.200.53 chassis01-lc2-1
+192.168.200.54 chassis03-lc4-1
+192.168.200.55 chassis01-lc2-2
+192.168.200.56 chassis01-lc3-1
+192.168.200.57 chassis01-lc3-2
+192.168.200.58 chassis02-fc4-1
+192.168.200.59 chassis04-lc4-1
+192.168.200.60 chassis04-lc4-2
+192.168.200.61 chassis03-lc4-2
+192.168.200.36 leaf06
+192.168.200.37 leaf04
+192.168.200.38 leaf05
+192.168.200.39 leaf02
+192.168.200.40 leaf03
+192.168.200.41 leaf01
+192.168.200.13 server01
+192.168.200.14 server03
+192.168.200.15 server02
+192.168.200.16 server05
+192.168.200.19 server06
+192.168.200.29 server04
+
+
+# The following lines are desirable for IPv6 capable hosts
+::1     localhost ip6-localhost ip6-loopback
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
