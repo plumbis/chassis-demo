@@ -61,7 +61,7 @@ if grep -q -i 'cumulus' /etc/lsb-release &> /dev/null; then
         echo "  INFO: Detected Cumulus Linux v$DISTRIB_RELEASE Release"
         if [[ $DISTRIB_RELEASE =~ ^3.[1-9].* ]]; then
             echo "### Fixing ONIE DHCP to avoid Vagrant Interface ###"
-            echo "     Note: Installing from ONIE will undo these changes."
+            echo "     Note: Installing from ONIE will undo these changes." 
             mkdir /tmp/foo
             mount LABEL=ONIE-BOOT /tmp/foo
             sed -i 's/eth0/eth1/g' /tmp/foo/grub/grub.cfg
@@ -100,10 +100,6 @@ Vagrant.configure("2") do |config|
 # ANSIBLE GROUPS CONFIGURATION
     ansible.groups = {
       "spine" => ["chassis02-lc1-1","chassis03-lc1-1","chassis02-fc1-1","chassis02-lc1-2","chassis02-fc3-1","chassis03-lc3-1","chassis02-lc2-2","chassis02-fc2-1","chassis02-lc2-1","chassis04-lc3-1","chassis04-fc1-1","chassis03-fc4-1","chassis04-lc2-1","chassis03-lc2-1","chassis01-fc4-1","chassis01-fc1-1","chassis02-lc3-1","chassis04-lc3-2","chassis03-lc1-2","chassis01-fc3-1","chassis02-lc4-1","chassis02-lc4-2","chassis03-lc3-2","chassis04-fc3-1","chassis04-lc2-2","chassis01-fc2-1","chassis04-fc2-1","chassis04-fc4-1","chassis02-lc3-2","chassis03-fc2-1","chassis01-lc1-2","chassis03-fc3-1","chassis01-lc1-1","chassis04-lc1-2","chassis04-lc1-1","chassis03-fc1-1","chassis03-lc2-2","chassis01-lc4-2","chassis01-lc4-1","chassis01-lc2-1","chassis03-lc4-1","chassis01-lc2-2","chassis01-lc3-1","chassis01-lc3-2","chassis02-fc4-1","chassis04-lc4-1","chassis04-lc4-2","chassis03-lc4-2",],
-      "chassis01" => ["chassis01-lc1-1", "chassis01-lc1-2", "chassis01-lc2-1", "chassis01-lc2-2", "chassis01-lc3-1", "chassis01-lc3-2", "chassis01-lc4-1", "chassis01-lc4-2", "chassis01-fc1-1", "chassis01-fc2-1", "chassis01-fc3-1", "chassis01-fc4-1"],
-      "chassis02" => ["chassis02-lc1-1", "chassis02-lc1-2", "chassis02-lc2-1", "chassis02-lc2-2", "chassis02-lc3-1", "chassis02-lc3-2", "chassis02-lc4-1", "chassis02-lc4-2", "chassis02-fc1-1", "chassis02-fc2-1", "chassis02-fc3-1", "chassis02-fc4-1"],
-      "chassis03" => ["chassis03-lc1-1", "chassis03-lc1-2", "chassis03-lc2-1", "chassis03-lc2-2", "chassis03-lc3-1", "chassis03-lc3-2", "chassis03-lc4-1", "chassis03-lc4-2", "chassis03-fc1-1", "chassis03-fc2-1", "chassis03-fc3-1", "chassis03-fc4-1"],
-      "chassis04" => ["chassis04-lc1-1", "chassis04-lc1-2", "chassis04-lc2-1", "chassis04-lc2-2", "chassis04-lc3-1", "chassis04-lc3-2", "chassis04-lc4-1", "chassis04-lc4-2", "chassis04-fc1-1", "chassis04-fc2-1", "chassis04-fc3-1", "chassis04-fc4-1"],
       "oob-server" => ["oob-mgmt-server",],
       "oob-switch" => ["oob-mgmt-switch",],
       "leaf" => ["leaf06","leaf04","leaf05","leaf02","leaf03","leaf01",],
@@ -115,9 +111,9 @@ Vagrant.configure("2") do |config|
 
   ##### DEFINE VM for oob-mgmt-server #####
   config.vm.define "oob-mgmt-server" do |device|
-
-    device.vm.hostname = "oob-mgmt-server"
-
+    
+    device.vm.hostname = "oob-mgmt-server" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
@@ -172,7 +168,7 @@ device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:4a --> eth1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:4a", NAME="eth1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -188,9 +184,9 @@ end
 
   ##### DEFINE VM for oob-mgmt-switch #####
   config.vm.define "oob-mgmt-switch" do |device|
-
-    device.vm.hostname = "oob-mgmt-switch"
-
+    
+    device.vm.hostname = "oob-mgmt-switch" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
 
     device.vm.provider :libvirt do |v|
@@ -1082,7 +1078,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:c1 --> swp61"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:c1", NAME="swp61", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -1098,9 +1094,9 @@ end
 
   ##### DEFINE VM for chassis02-lc1-1 #####
   config.vm.define "chassis02-lc1-1" do |device|
-
-    device.vm.hostname = "chassis02-lc1-1"
-
+    
+    device.vm.hostname = "chassis02-lc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -1306,7 +1302,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -1389,7 +1385,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:d7 --> swp1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:d7", NAME="swp1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -1405,9 +1401,9 @@ end
 
   ##### DEFINE VM for chassis03-lc1-1 #####
   config.vm.define "chassis03-lc1-1" do |device|
-
-    device.vm.hostname = "chassis03-lc1-1"
-
+    
+    device.vm.hostname = "chassis03-lc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -1613,7 +1609,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -1696,7 +1692,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:fc --> swp1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:fc", NAME="swp1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -1712,9 +1708,9 @@ end
 
   ##### DEFINE VM for chassis02-fc1-1 #####
   config.vm.define "chassis02-fc1-1" do |device|
-
-    device.vm.hostname = "chassis02-fc1-1"
-
+    
+    device.vm.hostname = "chassis02-fc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -2070,7 +2066,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -2213,7 +2209,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:1f --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:1f", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -2229,9 +2225,9 @@ end
 
   ##### DEFINE VM for chassis02-lc1-2 #####
   config.vm.define "chassis02-lc1-2" do |device|
-
-    device.vm.hostname = "chassis02-lc1-2"
-
+    
+    device.vm.hostname = "chassis02-lc1-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -2437,7 +2433,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -2520,7 +2516,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:2a --> swp2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:2a", NAME="swp2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -2536,9 +2532,9 @@ end
 
   ##### DEFINE VM for chassis02-fc3-1 #####
   config.vm.define "chassis02-fc3-1" do |device|
-
-    device.vm.hostname = "chassis02-fc3-1"
-
+    
+    device.vm.hostname = "chassis02-fc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -2894,7 +2890,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -3037,7 +3033,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:37 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:37", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -3053,9 +3049,9 @@ end
 
   ##### DEFINE VM for chassis03-lc3-1 #####
   config.vm.define "chassis03-lc3-1" do |device|
-
-    device.vm.hostname = "chassis03-lc3-1"
-
+    
+    device.vm.hostname = "chassis03-lc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -3261,7 +3257,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -3344,7 +3340,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:25 --> swp5"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:25", NAME="swp5", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -3360,9 +3356,9 @@ end
 
   ##### DEFINE VM for chassis02-lc2-2 #####
   config.vm.define "chassis02-lc2-2" do |device|
-
-    device.vm.hostname = "chassis02-lc2-2"
-
+    
+    device.vm.hostname = "chassis02-lc2-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -3568,7 +3564,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -3651,7 +3647,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:94 --> swp4"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:94", NAME="swp4", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -3667,9 +3663,9 @@ end
 
   ##### DEFINE VM for chassis02-fc2-1 #####
   config.vm.define "chassis02-fc2-1" do |device|
-
-    device.vm.hostname = "chassis02-fc2-1"
-
+    
+    device.vm.hostname = "chassis02-fc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -4025,7 +4021,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -4168,7 +4164,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:5b --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:5b", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -4184,9 +4180,9 @@ end
 
   ##### DEFINE VM for chassis02-lc2-1 #####
   config.vm.define "chassis02-lc2-1" do |device|
-
-    device.vm.hostname = "chassis02-lc2-1"
-
+    
+    device.vm.hostname = "chassis02-lc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -4392,7 +4388,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -4475,7 +4471,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:18 --> swp3"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:18", NAME="swp3", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -4491,9 +4487,9 @@ end
 
   ##### DEFINE VM for chassis04-lc3-1 #####
   config.vm.define "chassis04-lc3-1" do |device|
-
-    device.vm.hostname = "chassis04-lc3-1"
-
+    
+    device.vm.hostname = "chassis04-lc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -4699,7 +4695,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -4782,7 +4778,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:bf --> swp5"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:bf", NAME="swp5", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -4798,9 +4794,9 @@ end
 
   ##### DEFINE VM for chassis04-fc1-1 #####
   config.vm.define "chassis04-fc1-1" do |device|
-
-    device.vm.hostname = "chassis04-fc1-1"
-
+    
+    device.vm.hostname = "chassis04-fc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -5156,7 +5152,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -5299,7 +5295,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:ca --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:ca", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -5315,9 +5311,9 @@ end
 
   ##### DEFINE VM for chassis03-fc4-1 #####
   config.vm.define "chassis03-fc4-1" do |device|
-
-    device.vm.hostname = "chassis03-fc4-1"
-
+    
+    device.vm.hostname = "chassis03-fc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -5673,7 +5669,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -5816,7 +5812,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:58 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:58", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -5832,9 +5828,9 @@ end
 
   ##### DEFINE VM for chassis04-lc2-1 #####
   config.vm.define "chassis04-lc2-1" do |device|
-
-    device.vm.hostname = "chassis04-lc2-1"
-
+    
+    device.vm.hostname = "chassis04-lc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -6040,7 +6036,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -6123,7 +6119,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:da --> swp3"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:da", NAME="swp3", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -6139,9 +6135,9 @@ end
 
   ##### DEFINE VM for chassis03-lc2-1 #####
   config.vm.define "chassis03-lc2-1" do |device|
-
-    device.vm.hostname = "chassis03-lc2-1"
-
+    
+    device.vm.hostname = "chassis03-lc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -6347,7 +6343,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -6430,7 +6426,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:34 --> swp3"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:34", NAME="swp3", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -6446,9 +6442,9 @@ end
 
   ##### DEFINE VM for chassis01-fc4-1 #####
   config.vm.define "chassis01-fc4-1" do |device|
-
-    device.vm.hostname = "chassis01-fc4-1"
-
+    
+    device.vm.hostname = "chassis01-fc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -6804,7 +6800,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -6947,7 +6943,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:7c --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:7c", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -6963,9 +6959,9 @@ end
 
   ##### DEFINE VM for chassis01-fc1-1 #####
   config.vm.define "chassis01-fc1-1" do |device|
-
-    device.vm.hostname = "chassis01-fc1-1"
-
+    
+    device.vm.hostname = "chassis01-fc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -7321,7 +7317,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -7464,7 +7460,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:64 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:64", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -7480,9 +7476,9 @@ end
 
   ##### DEFINE VM for chassis02-lc3-1 #####
   config.vm.define "chassis02-lc3-1" do |device|
-
-    device.vm.hostname = "chassis02-lc3-1"
-
+    
+    device.vm.hostname = "chassis02-lc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -7688,7 +7684,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -7771,7 +7767,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:d8 --> swp5"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:d8", NAME="swp5", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -7787,9 +7783,9 @@ end
 
   ##### DEFINE VM for chassis04-lc3-2 #####
   config.vm.define "chassis04-lc3-2" do |device|
-
-    device.vm.hostname = "chassis04-lc3-2"
-
+    
+    device.vm.hostname = "chassis04-lc3-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -7995,7 +7991,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -8078,7 +8074,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:7a --> swp6"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:7a", NAME="swp6", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -8094,9 +8090,9 @@ end
 
   ##### DEFINE VM for chassis03-lc1-2 #####
   config.vm.define "chassis03-lc1-2" do |device|
-
-    device.vm.hostname = "chassis03-lc1-2"
-
+    
+    device.vm.hostname = "chassis03-lc1-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -8302,7 +8298,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -8385,7 +8381,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:6f --> swp2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:6f", NAME="swp2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -8401,9 +8397,9 @@ end
 
   ##### DEFINE VM for chassis01-fc3-1 #####
   config.vm.define "chassis01-fc3-1" do |device|
-
-    device.vm.hostname = "chassis01-fc3-1"
-
+    
+    device.vm.hostname = "chassis01-fc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -8759,7 +8755,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -8902,7 +8898,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:1f --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:1f", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -8918,9 +8914,9 @@ end
 
   ##### DEFINE VM for chassis02-lc4-1 #####
   config.vm.define "chassis02-lc4-1" do |device|
-
-    device.vm.hostname = "chassis02-lc4-1"
-
+    
+    device.vm.hostname = "chassis02-lc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -9116,7 +9112,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -9195,7 +9191,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:55 --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:55", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -9211,9 +9207,9 @@ end
 
   ##### DEFINE VM for chassis02-lc4-2 #####
   config.vm.define "chassis02-lc4-2" do |device|
-
-    device.vm.hostname = "chassis02-lc4-2"
-
+    
+    device.vm.hostname = "chassis02-lc4-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -9409,7 +9405,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -9488,7 +9484,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:44 --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:44", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -9504,9 +9500,9 @@ end
 
   ##### DEFINE VM for chassis03-lc3-2 #####
   config.vm.define "chassis03-lc3-2" do |device|
-
-    device.vm.hostname = "chassis03-lc3-2"
-
+    
+    device.vm.hostname = "chassis03-lc3-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -9712,7 +9708,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -9795,7 +9791,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:f4 --> swp6"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:f4", NAME="swp6", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -9811,9 +9807,9 @@ end
 
   ##### DEFINE VM for chassis04-fc3-1 #####
   config.vm.define "chassis04-fc3-1" do |device|
-
-    device.vm.hostname = "chassis04-fc3-1"
-
+    
+    device.vm.hostname = "chassis04-fc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -10169,7 +10165,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -10312,7 +10308,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:a9 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:a9", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -10328,9 +10324,9 @@ end
 
   ##### DEFINE VM for chassis04-lc2-2 #####
   config.vm.define "chassis04-lc2-2" do |device|
-
-    device.vm.hostname = "chassis04-lc2-2"
-
+    
+    device.vm.hostname = "chassis04-lc2-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -10536,7 +10532,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -10619,7 +10615,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:65 --> swp4"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:65", NAME="swp4", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -10635,9 +10631,9 @@ end
 
   ##### DEFINE VM for chassis01-fc2-1 #####
   config.vm.define "chassis01-fc2-1" do |device|
-
-    device.vm.hostname = "chassis01-fc2-1"
-
+    
+    device.vm.hostname = "chassis01-fc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -10993,7 +10989,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -11136,7 +11132,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:43 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:43", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -11152,9 +11148,9 @@ end
 
   ##### DEFINE VM for chassis04-fc2-1 #####
   config.vm.define "chassis04-fc2-1" do |device|
-
-    device.vm.hostname = "chassis04-fc2-1"
-
+    
+    device.vm.hostname = "chassis04-fc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -11510,7 +11506,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -11653,7 +11649,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:14 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:14", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -11669,9 +11665,9 @@ end
 
   ##### DEFINE VM for chassis04-fc4-1 #####
   config.vm.define "chassis04-fc4-1" do |device|
-
-    device.vm.hostname = "chassis04-fc4-1"
-
+    
+    device.vm.hostname = "chassis04-fc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -12027,7 +12023,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -12170,7 +12166,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:1b --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:1b", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -12186,9 +12182,9 @@ end
 
   ##### DEFINE VM for chassis02-lc3-2 #####
   config.vm.define "chassis02-lc3-2" do |device|
-
-    device.vm.hostname = "chassis02-lc3-2"
-
+    
+    device.vm.hostname = "chassis02-lc3-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -12394,7 +12390,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -12477,7 +12473,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:09 --> swp6"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:09", NAME="swp6", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -12493,9 +12489,9 @@ end
 
   ##### DEFINE VM for chassis03-fc2-1 #####
   config.vm.define "chassis03-fc2-1" do |device|
-
-    device.vm.hostname = "chassis03-fc2-1"
-
+    
+    device.vm.hostname = "chassis03-fc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -12851,7 +12847,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -12994,7 +12990,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:4b --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:4b", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -13010,9 +13006,9 @@ end
 
   ##### DEFINE VM for chassis01-lc1-2 #####
   config.vm.define "chassis01-lc1-2" do |device|
-
-    device.vm.hostname = "chassis01-lc1-2"
-
+    
+    device.vm.hostname = "chassis01-lc1-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -13218,7 +13214,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -13301,7 +13297,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:25 --> swp2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:25", NAME="swp2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -13317,9 +13313,9 @@ end
 
   ##### DEFINE VM for chassis03-fc3-1 #####
   config.vm.define "chassis03-fc3-1" do |device|
-
-    device.vm.hostname = "chassis03-fc3-1"
-
+    
+    device.vm.hostname = "chassis03-fc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -13675,7 +13671,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -13818,7 +13814,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:1e --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:1e", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -13834,9 +13830,9 @@ end
 
   ##### DEFINE VM for chassis01-lc1-1 #####
   config.vm.define "chassis01-lc1-1" do |device|
-
-    device.vm.hostname = "chassis01-lc1-1"
-
+    
+    device.vm.hostname = "chassis01-lc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -14042,7 +14038,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -14125,7 +14121,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:31 --> swp1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:31", NAME="swp1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -14141,9 +14137,9 @@ end
 
   ##### DEFINE VM for chassis04-lc1-2 #####
   config.vm.define "chassis04-lc1-2" do |device|
-
-    device.vm.hostname = "chassis04-lc1-2"
-
+    
+    device.vm.hostname = "chassis04-lc1-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -14349,7 +14345,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -14432,7 +14428,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:27 --> swp2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:27", NAME="swp2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -14448,9 +14444,9 @@ end
 
   ##### DEFINE VM for chassis04-lc1-1 #####
   config.vm.define "chassis04-lc1-1" do |device|
-
-    device.vm.hostname = "chassis04-lc1-1"
-
+    
+    device.vm.hostname = "chassis04-lc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -14656,7 +14652,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -14739,7 +14735,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:86 --> swp1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:86", NAME="swp1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -14755,9 +14751,9 @@ end
 
   ##### DEFINE VM for chassis03-fc1-1 #####
   config.vm.define "chassis03-fc1-1" do |device|
-
-    device.vm.hostname = "chassis03-fc1-1"
-
+    
+    device.vm.hostname = "chassis03-fc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -15113,7 +15109,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -15256,7 +15252,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:7e --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:7e", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -15272,9 +15268,9 @@ end
 
   ##### DEFINE VM for chassis03-lc2-2 #####
   config.vm.define "chassis03-lc2-2" do |device|
-
-    device.vm.hostname = "chassis03-lc2-2"
-
+    
+    device.vm.hostname = "chassis03-lc2-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -15480,7 +15476,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -15563,7 +15559,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:27 --> swp4"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:27", NAME="swp4", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -15579,9 +15575,9 @@ end
 
   ##### DEFINE VM for chassis01-lc4-2 #####
   config.vm.define "chassis01-lc4-2" do |device|
-
-    device.vm.hostname = "chassis01-lc4-2"
-
+    
+    device.vm.hostname = "chassis01-lc4-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -15777,7 +15773,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -15856,7 +15852,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:7b --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:7b", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -15872,9 +15868,9 @@ end
 
   ##### DEFINE VM for chassis01-lc4-1 #####
   config.vm.define "chassis01-lc4-1" do |device|
-
-    device.vm.hostname = "chassis01-lc4-1"
-
+    
+    device.vm.hostname = "chassis01-lc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -16070,7 +16066,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -16149,7 +16145,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:6e --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:6e", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -16165,9 +16161,9 @@ end
 
   ##### DEFINE VM for chassis01-lc2-1 #####
   config.vm.define "chassis01-lc2-1" do |device|
-
-    device.vm.hostname = "chassis01-lc2-1"
-
+    
+    device.vm.hostname = "chassis01-lc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -16373,7 +16369,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -16456,7 +16452,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:98 --> swp3"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:98", NAME="swp3", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -16472,9 +16468,9 @@ end
 
   ##### DEFINE VM for chassis03-lc4-1 #####
   config.vm.define "chassis03-lc4-1" do |device|
-
-    device.vm.hostname = "chassis03-lc4-1"
-
+    
+    device.vm.hostname = "chassis03-lc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -16670,7 +16666,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -16749,7 +16745,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:83 --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:83", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -16765,9 +16761,9 @@ end
 
   ##### DEFINE VM for chassis01-lc2-2 #####
   config.vm.define "chassis01-lc2-2" do |device|
-
-    device.vm.hostname = "chassis01-lc2-2"
-
+    
+    device.vm.hostname = "chassis01-lc2-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -16973,7 +16969,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -17056,7 +17052,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:96 --> swp4"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:96", NAME="swp4", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -17072,9 +17068,9 @@ end
 
   ##### DEFINE VM for chassis01-lc3-1 #####
   config.vm.define "chassis01-lc3-1" do |device|
-
-    device.vm.hostname = "chassis01-lc3-1"
-
+    
+    device.vm.hostname = "chassis01-lc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -17280,7 +17276,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -17363,7 +17359,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:a0 --> swp5"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:a0", NAME="swp5", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -17379,9 +17375,9 @@ end
 
   ##### DEFINE VM for chassis01-lc3-2 #####
   config.vm.define "chassis01-lc3-2" do |device|
-
-    device.vm.hostname = "chassis01-lc3-2"
-
+    
+    device.vm.hostname = "chassis01-lc3-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -17587,7 +17583,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -17670,7 +17666,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:bd --> swp6"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:bd", NAME="swp6", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -17686,9 +17682,9 @@ end
 
   ##### DEFINE VM for chassis02-fc4-1 #####
   config.vm.define "chassis02-fc4-1" do |device|
-
-    device.vm.hostname = "chassis02-fc4-1"
-
+    
+    device.vm.hostname = "chassis02-fc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -18044,7 +18040,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -18187,7 +18183,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:45 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:45", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -18203,9 +18199,9 @@ end
 
   ##### DEFINE VM for chassis04-lc4-1 #####
   config.vm.define "chassis04-lc4-1" do |device|
-
-    device.vm.hostname = "chassis04-lc4-1"
-
+    
+    device.vm.hostname = "chassis04-lc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -18401,7 +18397,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -18480,7 +18476,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:2b --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:2b", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -18496,9 +18492,9 @@ end
 
   ##### DEFINE VM for chassis04-lc4-2 #####
   config.vm.define "chassis04-lc4-2" do |device|
-
-    device.vm.hostname = "chassis04-lc4-2"
-
+    
+    device.vm.hostname = "chassis04-lc4-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -18694,7 +18690,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -18773,7 +18769,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:1a --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:1a", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -18789,9 +18785,9 @@ end
 
   ##### DEFINE VM for chassis03-lc4-2 #####
   config.vm.define "chassis03-lc4-2" do |device|
-
-    device.vm.hostname = "chassis03-lc4-2"
-
+    
+    device.vm.hostname = "chassis03-lc4-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -18987,7 +18983,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -19066,7 +19062,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:57 --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:57", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19082,9 +19078,9 @@ end
 
   ##### DEFINE VM for leaf06 #####
   config.vm.define "leaf06" do |device|
-
-    device.vm.hostname = "leaf06"
-
+    
+    device.vm.hostname = "leaf06" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19200,7 +19196,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -19247,7 +19243,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:79 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:79", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19263,9 +19259,9 @@ end
 
   ##### DEFINE VM for leaf04 #####
   config.vm.define "leaf04" do |device|
-
-    device.vm.hostname = "leaf04"
-
+    
+    device.vm.hostname = "leaf04" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19381,7 +19377,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -19428,7 +19424,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:64 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:64", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19444,9 +19440,9 @@ end
 
   ##### DEFINE VM for leaf05 #####
   config.vm.define "leaf05" do |device|
-
-    device.vm.hostname = "leaf05"
-
+    
+    device.vm.hostname = "leaf05" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19562,7 +19558,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -19609,7 +19605,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:be --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:be", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19625,9 +19621,9 @@ end
 
   ##### DEFINE VM for leaf02 #####
   config.vm.define "leaf02" do |device|
-
-    device.vm.hostname = "leaf02"
-
+    
+    device.vm.hostname = "leaf02" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19743,7 +19739,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -19790,7 +19786,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:26 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:26", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19806,9 +19802,9 @@ end
 
   ##### DEFINE VM for leaf03 #####
   config.vm.define "leaf03" do |device|
-
-    device.vm.hostname = "leaf03"
-
+    
+    device.vm.hostname = "leaf03" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19924,7 +19920,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -19971,7 +19967,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:d9 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:d9", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19987,9 +19983,9 @@ end
 
   ##### DEFINE VM for leaf01 #####
   config.vm.define "leaf01" do |device|
-
-    device.vm.hostname = "leaf01"
-
+    
+    device.vm.hostname = "leaf01" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -20105,7 +20101,7 @@ end
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_switch.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_switch_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -20152,7 +20148,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:85 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:85", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20168,13 +20164,13 @@ end
 
   ##### DEFINE VM for server01 #####
   config.vm.define "server01" do |device|
-
-    device.vm.hostname = "server01"
-
+    
+    device.vm.hostname = "server01" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20222,10 +20218,10 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_server.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -20248,7 +20244,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:11:11:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:11:11:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20264,13 +20260,13 @@ end
 
   ##### DEFINE VM for server03 #####
   config.vm.define "server03" do |device|
-
-    device.vm.hostname = "server03"
-
+    
+    device.vm.hostname = "server03" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20318,10 +20314,10 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_server.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -20344,7 +20340,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:33:33:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:33:33:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20360,13 +20356,13 @@ end
 
   ##### DEFINE VM for server02 #####
   config.vm.define "server02" do |device|
-
-    device.vm.hostname = "server02"
-
+    
+    device.vm.hostname = "server02" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20414,10 +20410,10 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_server.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -20440,7 +20436,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:22:22:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:22:22:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20456,13 +20452,13 @@ end
 
   ##### DEFINE VM for server05 #####
   config.vm.define "server05" do |device|
-
-    device.vm.hostname = "server05"
-
+    
+    device.vm.hostname = "server05" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20510,10 +20506,10 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_server.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -20536,7 +20532,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:55:55:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:55:55:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20552,13 +20548,13 @@ end
 
   ##### DEFINE VM for server06 #####
   config.vm.define "server06" do |device|
-
-    device.vm.hostname = "server06"
-
+    
+    device.vm.hostname = "server06" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20606,10 +20602,10 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_server.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -20632,7 +20628,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:66:66:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:66:66:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20648,13 +20644,13 @@ end
 
   ##### DEFINE VM for server04 #####
   config.vm.define "server04" do |device|
-
-    device.vm.hostname = "server04"
-
+    
+    device.vm.hostname = "server04" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20702,10 +20698,10 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/config_server.sh"
+    device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
 
 
     # Install Rules for the interface re-map
@@ -20728,7 +20724,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:44:44:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:44:44:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
