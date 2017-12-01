@@ -2,7 +2,7 @@
 #    Template Revision: v4.6.5
 #    https://github.com/cumulusnetworks/topology_converter
 #    using topology data from: topology.dot
-#    built with the following args: topology_converter.py -p libvirt -a -c topology.dot
+#    built with the following args: topology_converter.py -p libvirt -c topology.dot
 #
 #    NOTE: in order to use this Vagrantfile you will need:
 #       -Vagrant(v1.8.6+) installed: http://www.vagrantup.com/downloads
@@ -93,20 +93,6 @@ Vagrant.configure("2") do |config|
   end
 
 
-  #Generating Ansible Host File at following location:
-  #    ./.vagrant/provisioners/ansible/inventory/vagrant_ansible_inventory
-  config.vm.provision "ansible" do |ansible|
-    ansible.playbook = "./helper_scripts/empty_playbook.yml"
-# ANSIBLE GROUPS CONFIGURATION
-    ansible.groups = {
-      "spine" => ["chassis02-lc1-1","chassis03-lc1-1","chassis02-fc1-1","chassis02-lc1-2","chassis02-fc3-1","chassis03-lc3-1","chassis02-lc2-2","chassis02-fc2-1","chassis02-lc2-1","chassis04-lc3-1","chassis04-fc1-1","chassis03-fc4-1","chassis04-lc2-1","chassis03-lc2-1","chassis01-fc4-1","chassis01-fc1-1","chassis02-lc3-1","chassis04-lc3-2","chassis03-lc1-2","chassis01-fc3-1","chassis02-lc4-1","chassis02-lc4-2","chassis03-lc3-2","chassis04-fc3-1","chassis04-lc2-2","chassis01-fc2-1","chassis04-fc2-1","chassis04-fc4-1","chassis02-lc3-2","chassis03-fc2-1","chassis01-lc1-2","chassis03-fc3-1","chassis01-lc1-1","chassis04-lc1-2","chassis04-lc1-1","chassis03-fc1-1","chassis03-lc2-2","chassis01-lc4-2","chassis01-lc4-1","chassis01-lc2-1","chassis03-lc4-1","chassis01-lc2-2","chassis01-lc3-1","chassis01-lc3-2","chassis02-fc4-1","chassis04-lc4-1","chassis04-lc4-2","chassis03-lc4-2",],
-      "oob-server" => ["oob-mgmt-server",],
-      "oob-switch" => ["oob-mgmt-switch",],
-      "leaf" => ["leaf06","leaf04","leaf05","leaf02","leaf03","leaf01",],
-      "host" => ["server01","server03","server02","server05","server06","server04",],
-      "network:children" => ["spine","oob-switch","leaf",]
-    }
-  end
 
 
   ##### DEFINE VM for oob-mgmt-server #####
