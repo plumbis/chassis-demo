@@ -80,7 +80,7 @@ graph dc1 {
  "leaf03":"swp49" -- "leaf04":"swp49"
  "leaf03":"swp50" -- "leaf04":"swp50"
  "leaf05":"swp49" -- "leaf06":"swp49"
- "leaf05":"swp49" -- "leaf06":"swp49"
+ "leaf05":"swp50" -- "leaf06":"swp50"
 
  "leaf03":"swp51" -- "chassis01-lc2-1":"swp3"
  "leaf03":"swp52" -- "chassis02-lc2-1":"swp3"
@@ -114,8 +114,8 @@ graph dc1 {
  "server04":"eth1" -- "leaf03":"swp2" [left_mac="00:03:00:44:44:01"]
  "server04":"eth2" -- "leaf04":"swp2" [left_mac="00:03:00:44:44:02"]
 
- "server05":"eth1" -- "leaf05":"swp2" [left_mac="00:03:00:55:55:01"]
- "server05":"eth2" -- "leaf06":"swp2" [left_mac="00:03:00:55:55:02"]
+ "server05":"eth1" -- "leaf05":"swp1" [left_mac="00:03:00:55:55:01"]
+ "server05":"eth2" -- "leaf06":"swp1" [left_mac="00:03:00:55:55:02"]
 
  "server06":"eth1" -- "leaf05":"swp2" [left_mac="00:03:00:66:66:01"]
  "server06":"eth2" -- "leaf06":"swp2" [left_mac="00:03:00:66:66:02"]
