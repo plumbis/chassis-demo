@@ -95,6 +95,18 @@ chassis04-fc4-1 ansible_user=cumulus ansible_ssh_pass=CumulusLinux! ansible_beco
 chassis04-fc
 chassis04-lc
 
+[linecards:children]
+chassis01-lc
+chassis02-lc
+chassis03-lc
+chassis04-lc
+
+[fabriccards:children]
+chassis01-fc
+chassis02-fc
+chassis03-fc
+chassis04-fc
+
 [spines:children]
 chassis01
 chassis02
