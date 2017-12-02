@@ -5,6 +5,7 @@
   roles:
     - global_common
     - linecard_common
+    - netq
   handlers:
     - include: handlers/main.yml
 
@@ -13,5 +14,6 @@
   roles:
     - global_common
     - fabriccard_common
+    - netq
   handlers:
     - include: handlers/main.yml

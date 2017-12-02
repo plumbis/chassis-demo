@@ -1,0 +1,29 @@
+---
+- name: Configured NTP in management VRF
+  command: "{{item}}"
+  with_items:
+    - systemctl stop ntp.service
+    - systemctl disable ntp.service
+    - systemctl start ntp@mgmt
+
+- name: Add Cumulus Repo
+  apt_repository:
+    repo: deb http://apps3.cumulusnetworks.com/repos/deb CumulusLinux-3 netq-1.2  # yamllint disable-line rule:line-length
+    state: present
+    update_cache: no
+
+- name: Install NetQ
+  apt:
+    name: cumulus-netq
+    update_cache: yes
+
+- name: Restart Rsyslog
+  service:
+    name: rsyslog
+    state: restarted
+
+- name: Add netq server IP
+  command: netq config add server 192.168.0.254 vrf mgmt
+
+- name: Restart NetQ Agent
+  command: netq config agent restart
