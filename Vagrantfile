@@ -100,10 +100,10 @@ Vagrant.configure("2") do |config|
 
     device.vm.hostname = "oob-mgmt-server"
 
-    device.vm.box = "yk0/ubuntu-xenial"
+    device.vm.box = "cumulus/ts"
 
     device.vm.provider :libvirt do |v|
-      v.memory = 512
+      v.memory = 1024
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
     device.vm.synced_folder ".", "/vagrant", disabled: true
