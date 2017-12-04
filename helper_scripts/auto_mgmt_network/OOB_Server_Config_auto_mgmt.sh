@@ -45,7 +45,7 @@ install_puppet(){
 
 install_ansible(){
     echo " ### Installing Ansible... ###"
-    apt-get install -qy gcc build-essentials sshpass libssh-dev python-dev libffi-dev
+    apt-get install -qy sshpass libssh-dev libffi-dev
     pip install pip --upgrade
     pip install setuptools --upgrade
     pip install ansible==$ansible_version --upgrade
@@ -98,7 +98,7 @@ echo 'deb http://deb.debian.org/debian/ oldstable main contrib non-free' | sudo 
 apt-get update -y
 
 echo " ### Installing Packages... ###"
-apt-get install -y htop apache2 git python-pip dnsmasq apt-cacher-ng
+apt-get install -y htop apache2 git gcc build-essentials python-dev python-pip dnsmasq apt-cacher-ng
 
 if [ $puppet -eq 1 ]; then
     echo " ### Installing Puppet ### "
