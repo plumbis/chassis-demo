@@ -80,8 +80,8 @@ auto lo
 iface lo inet loopback
 
 
-auto eth0
-iface eth0 inet dhcp
+auto vagrant
+iface vagrant inet dhcp
 
 
 auto swp1
