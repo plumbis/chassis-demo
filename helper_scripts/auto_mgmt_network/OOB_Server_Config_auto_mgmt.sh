@@ -107,9 +107,8 @@ apt-get install -y ansible htop apache2 git dnsmasq apt-cacher-ng
 echo " ### Setting Up DHCP ###"
 mv /home/$username/dhcpd.conf /etc/dhcp/dhcpd.conf
 mv /home/$username/dhcpd.hosts /etc/dhcp/dhcpd.hosts
-mv /home/$username/isc-dhcp-server /etc/default/isc-dhcp-server
 chmod 755 -R /etc/dhcp/*
-systemctl restart isc-dhcp-server
+systemctl start dhcpd.service
 
 echo " ### Setting up ZTP ###"
 mv /home/$username/ztp_oob.sh /var/www/html/ztp_oob.sh
