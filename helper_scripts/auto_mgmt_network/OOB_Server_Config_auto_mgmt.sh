@@ -76,17 +76,17 @@ chmod 755 /etc/motd
 
 echo " ### Overwriting /etc/network/interfaces ###"
 cat <<EOT > /etc/network/interfaces
+# The loopback network interface
 auto lo
 iface lo inet loopback
 
-
-auto vagrant
-iface vagrant inet dhcp
-
+# The primary network interface
+auto eth0
+iface eth0 inet dhcp
 
 auto swp1
 iface swp1
-    address 192.168.200.254/24
+  address 192.168.200.254/24
 EOT
 
 echo " ### Overwriting DNS Server to 8.8.8.8 ###"
@@ -107,6 +107,7 @@ apt-get install -y ansible htop apache2 git dnsmasq apt-cacher-ng
 echo " ### Setting Up DHCP ###"
 mv /home/$username/dhcpd.conf /etc/dhcp/dhcpd.conf
 mv /home/$username/dhcpd.hosts /etc/dhcp/dhcpd.hosts
+mv /home/$username/isc-dhcp-server /etc/default/isc-dhcp-server
 chmod 755 -R /etc/dhcp/*
 systemctl restart isc-dhcp-server
 
@@ -178,6 +179,9 @@ cat <<EOT >> /home/cumulus/.gitconfig
 [core]
     editor = vim
 EOT
+
+sed -i 's/users_with_edit = root, cumulus/users_with_edit = root, cumulus, vagrant/g' /etc/netd.conf
+sed -i 's/users_with_show = root, cumulus/users_with_show = root, cumulus, vagrant/g' /etc/netd.conf
 
 echo "############################################"
 echo "      DONE!"
