@@ -95,19 +95,13 @@ echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
 echo " ### Updating APT Repository... ###"
 echo 'deb http://deb.debian.org/debian/ oldstable main contrib non-free' | sudo tee -a /etc/apt/sources.list
+echo 'deb http://ppa.launchpad.net/ansible/ansible/ubuntu trusty main' | sudo tee -a /etc/apt/sources.list
+
+sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 93C4A3FD7BB9C367
 apt-get update -y
 
 echo " ### Installing Packages... ###"
-apt-get install -y htop apache2 git gcc build-essential python-dev python-pip dnsmasq apt-cacher-ng
-
-if [ $puppet -eq 1 ]; then
-    echo " ### Installing Puppet ### "
-    install_puppet
-fi
-if [ $ansible -eq 1 ]; then
-    echo " ### Installing Ansible ### "
-    install_ansible
-fi
+apt-get install -y ansible htop apache2 git dnsmasq apt-cacher-ng
 
 
 echo " ### Setting Up DHCP ###"
