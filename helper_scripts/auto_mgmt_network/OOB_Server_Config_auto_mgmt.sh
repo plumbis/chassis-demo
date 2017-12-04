@@ -182,6 +182,8 @@ EOT
 sed -i 's/users_with_edit = root, cumulus/users_with_edit = root, cumulus, vagrant/g' /etc/netd.conf
 sed -i 's/users_with_show = root, cumulus/users_with_show = root, cumulus, vagrant/g' /etc/netd.conf
 
+sudo ifreload -a
+
 echo "############################################"
 echo "      DONE!"
 echo "############################################"
