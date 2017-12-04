@@ -45,7 +45,7 @@ install_puppet(){
 
 install_ansible(){
     echo " ### Installing Ansible... ###"
-    apt-get install -qy ansible sshpass libssh-dev python-dev libssl-dev libffi-dev
+    apt-get install -qy ansible sshpass libssh-dev python-dev libffi-dev
     pip install pip --upgrade
     pip install setuptools --upgrade
     pip install ansible==$ansible_version --upgrade
@@ -80,28 +80,25 @@ auto lo
 iface lo inet loopback
 
 
-auto vagrant
-iface vagrant inet dhcp
+auto eth0
+iface eth0 inet dhcp
 
 
-auto eth1
-iface eth1 inet static
+auto swp1
+iface swp1
     address 192.168.200.254/24
 EOT
 
 echo " ### Overwriting DNS Server to 8.8.8.8 ###"
 #Required because the installation of DNSmasq throws off DNS momentarily
-echo "nameserver 8.8.8.8" >> /etc/resolvconf/resolv.conf.d/head
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
 echo " ### Updating APT Repository... ###"
 echo 'deb http://deb.debian.org/debian/ oldstable main contrib non-free' | sudo tee -a /etc/apt/sources.list
 apt-get update -y
 
 echo " ### Installing Packages... ###"
-apt-get install -y htop isc-dhcp-server tree apache2 vlan git python-pip dnsmasq ifenslave apt-cacher-ng lldpd ntp
-modprobe 8021q
-#modprobe bonding
-echo "8021q" >> /etc/modules
+apt-get install -y htop apache2 git python-pip dnsmasq apt-cacher-ng
 
 if [ $puppet -eq 1 ]; then
     echo " ### Installing Puppet ### "
@@ -112,27 +109,6 @@ if [ $ansible -eq 1 ]; then
     install_ansible
 fi
 
-echo " ### Configure NTP... ###"
-echo <<EOT >> /etc/ntp.conf
-driftfile /var/lib/ntp/ntp.drift
-statistics loopstats peerstats clockstats
-filegen loopstats file loopstats type day enable
-filegen peerstats file peerstats type day enable
-filegen clockstats file clockstats type day enable
-
-server clock.rdu.cumulusnetworks.com
-
-# By default, exchange time with everybody, but don't allow configuration.
-restrict -4 default kod notrap nomodify nopeer noquery
-restrict -6 default kod notrap nomodify nopeer noquery
-
-# Local users may interrogate the ntp server more closely.
-restrict 127.0.0.1
-restrict ::1
-EOT
-
-echo " ### Creating cumulus user ###"
-useradd -m cumulus
 
 echo " ### Setting Up DHCP ###"
 mv /home/$username/dhcpd.conf /etc/dhcp/dhcpd.conf
@@ -172,8 +148,6 @@ echo "cumulus ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/10_cumulus
 
 echo ' ### Setting UP NAT and Routing on MGMT server... ### '
 echo -e '#!/bin/bash \n/sbin/iptables -t nat -A POSTROUTING -o vagrant -j MASQUERADE' > /etc/rc.local
-echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/98-ipforward.conf
-
 
 echo " ### Creating turnup.sh script ###"
     cat <<EOT >> /home/cumulus/turnup.sh
