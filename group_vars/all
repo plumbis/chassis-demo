@@ -10,7 +10,6 @@ fabriccards:
                    fp22, fp23, fp24, fp25, fp26, fp27, fp28, fp29, fp30, fp31]
 
 node:
-
     chassis01-lc1-1:
         interfaces:
             lo:
