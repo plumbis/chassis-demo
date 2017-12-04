@@ -94,6 +94,7 @@ echo " ### Overwriting DNS Server to 8.8.8.8 ###"
 echo "nameserver 8.8.8.8" >> /etc/resolvconf/resolv.conf.d/head
 
 echo " ### Updating APT Repository... ###"
+echo 'deb http://deb.debian.org/debian/ oldstable main contrib non-free' | sudo tee -a /etc/apt/sources.list
 apt-get update -y
 
 echo " ### Installing Packages... ###"
