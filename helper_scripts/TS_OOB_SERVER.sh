@@ -464,6 +464,15 @@ chown cumulus:cumulus -R /home/cumulus/.ssh
 
 echo "cumulus ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/10_cumulus
 
+sed -i '/iface eth0/a \ vrf mgmt' /etc/network/interfaces
+cat <<EOT >> /etc/network/interfaces
+auto mgmt
+iface mgmt
+  address 127.0.0.1/8
+  vrf-table auto
+EOT
+
+
 nohup bash -c 'sleep 2; shutdown now -r "Rebooting to Complete ZTP"' &
 exit 0
 #CUMULUS-AUTOPROVISIONING
