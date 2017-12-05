@@ -4,23 +4,10 @@ iface lo inet loopback
    address {{node[ansible_hostname]["interfaces"]["lo"]["ipv4"]}}
 
 
-auto eth0
-iface eth0 inet dhcp
- vrf mgmt
+auto eth1
+iface eth1
 
-auto mgmt
-iface mgmt
-  address 127.0.0.1/8
-  vrf-table auto
+auto eth2
+iface eth2
 
-{% for interface in node[ansible_hostname]["bgp"]["leafs"] -%}
-auto {{interface}}
-iface {{interface}}
-
-{% endfor %}
-
-{% for interface in linecards["fabric_ports"] -%}
-auto {{interface}}
-iface {{interface}}
-
-{% endfor %}
+source /etc/network/interfaces.d/*.cfg
