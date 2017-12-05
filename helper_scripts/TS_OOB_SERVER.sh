@@ -23,10 +23,10 @@ username=$(cat /tmp/normal_user)
 
 install_ansible(){
     echo " ### Installing Ansible... ###"
-    apt-get install -qy build-essential sshpass libssh-dev python-dev libssl-dev libffi-dev
-    pip install pip --upgrade
-    pip install setuptools --upgrade
-    pip install ansible==$ansible_version --upgrade
+    # apt-get install -qy build-essential sshpass libssh-dev python-dev libssl-dev libffi-dev
+    # pip install pip --upgrade
+    # pip install setuptools --upgrade
+    # pip install ansible==$ansible_version --upgrade
 }
 
 ## MOTD
@@ -63,7 +63,7 @@ iface eth0 inet dhcp
 auto swp1
 iface swp1
     alias Faces the Internal Management Network
-    address 192.168.0.254/24
+    address 192.168.200.254/24
 
 EOT
 
@@ -80,13 +80,17 @@ deb-src  http://deb.debian.org/debian jessie main
 
 deb  http://deb.debian.org/debian jessie-updates main
 deb-src  http://deb.debian.org/debian jessie-updates main
+deb http://ppa.launchpad.net/ansible/ansible/ubuntu trusty main
+
 EOT
 
+
 echo " ### Updating APT Repository... ###"
+sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 93C4A3FD7BB9C367
 apt-get update -y
 
 echo " ### Installing Packages... ###"
-apt-get install -y htop isc-dhcp-server tree apache2 git python-pip dnsmasq apt-cacher-ng ntpdate
+apt-get install -y htop isc-dhcp-server tree apache2 git python-pip dnsmasq apt-cacher-ng ntpdate ansible
 
 
 echo " ### Installing Ansible ### "
@@ -196,16 +200,16 @@ class "onie-vendor-classes" {
 # OOB Management subnet
 shared-network LOCAL-NET{
 
-subnet 192.168.0.0 netmask 255.255.255.0 {
-  range 192.168.0.1 192.168.0.250;
-  option domain-name-servers 192.168.0.254;
+subnet 192.168.200.0 netmask 255.255.255.0 {
+  range 192.168.200.1 192.168.200.250;
+  option domain-name-servers 192.168.200.254;
   option domain-name "simulation";
   default-lease-time 172800;  #2 days
   max-lease-time 345600;      #4 days
-  option www-server 192.168.0.254;
-  option default-url = "http://192.168.0.254/onie-installer";
-  option cumulus-provision-url "http://192.168.0.254/ztp_oob.sh";
-  option ntp-servers 192.168.0.254;
+  option www-server 192.168.200.254;
+  option default-url = "http://192.168.200.254/onie-installer";
+  option cumulus-provision-url "http://192.168.200.254/ztp_oob.sh";
+  option ntp-servers 192.168.200.254;
 }
 
 }
@@ -453,7 +457,7 @@ trap error ERR
 
 #Setup SSH key authentication for Ansible
 mkdir -p /home/cumulus/.ssh
-wget -O /home/cumulus/.ssh/authorized_keys http://192.168.0.254/authorized_keys
+wget -O /home/cumulus/.ssh/authorized_keys http://192.168.200.254/authorized_keys
 #echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCzH+R+UhjVicUtI0daNUcedYhfvgT1dbZXgY33Ibm4MOo+X84Iwuzirm3QFnYf2O3uyZjNyrA6fj9qFE7Ekul4bD6PCstQupXPwfPMjns2M7tkHsKnLYjNxWNql/rCUxoH2B6nPyztcRCass3lIc2clfXkCY9Jtf7kgC2e/dmchywPV5PrFqtlHgZUnyoPyWBH7OjPLVxYwtCJn96sFkrjaG9QDOeoeiNvcGlk4DJp/g9L4f2AaEq69x8+gBTFUqAFsD8ecO941cM8sa1167rsRPx7SK3270Ji5EUF3lZsgpaiIgMhtIB/7QNTkN9ZjQBazxxlNVN6WthF8okb7OSt" >> /home/cumulus/.ssh/authorized_keys
 chmod 700 -R /home/cumulus/.ssh
 chown cumulus:cumulus -R /home/cumulus/.ssh
