@@ -84,8 +84,8 @@ iface lo inet loopback
 auto eth0
 iface eth0 inet dhcp
 
-auto eth1
-iface eth1
+auto swp1
+iface swp1
   address 192.168.200.254/24
 EOT
 
