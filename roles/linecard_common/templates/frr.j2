@@ -9,6 +9,12 @@ service integrated-vtysh-config
 !
 log syslog informational
 !
+{% for interface in node[ansible_hostname]["bgp"]["leafs"] -%}
+interface {{interface}}
+ ipv6 nd ra-interval 10
+ no ipv6 nd suppress-ra
+!
+{% endfor %}
 {% for interface in linecards["fabric_ports"] -%}
 interface {{interface}}
  ipv6 nd ra-interval 10
@@ -19,8 +25,13 @@ router bgp {{ bgp["asn"] }}
  bgp router-id {{ interfaces["lo"]["ipv4"]|replace("/32", "")}}
  neighbor FABRIC peer-group
  neighbor FABRIC remote-as external
+ neighbor LEAFS peer-group
+ neighbor LEAFS remote-as external
 {% for interface in linecards["fabric_ports"] -%}
  neighbor {{interface}} interface peer-group FABRIC
+{% endfor -%}
+{% for interface in node[ansible_hostname]["bgp"]["leafs"] -%}
+ neighbor {{interface}} interface peer-group LEAFS
 {% endfor -%}
  !
  address-family ipv4 unicast
@@ -30,6 +41,7 @@ router bgp {{ bgp["asn"] }}
  address-family ipv6 unicast
   redistribute connected
   neighbor FABRIC activate
+  neighbor LEAFS activate
  exit-address-family
 !
 line vty

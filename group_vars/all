@@ -107,6 +107,7 @@ node:
                 ipv4: "10.1.1.1/32"
         bgp:
             asn: 4200000111
+            leafs: ["swp1"]
 
     chassis01-lc1-2:
         interfaces:
@@ -114,6 +115,7 @@ node:
                 ipv4: "10.1.1.2/32"
         bgp:
             asn: 4200000112
+            leafs: ["swp2"]
 
     chassis01-lc2-1:
         interfaces:
@@ -121,6 +123,7 @@ node:
                 ipv4: "10.1.2.1/32"
         bgp:
             asn: 4200000121
+            leafs: ["swp3"]
 
     chassis01-lc2-2:
         interfaces:
@@ -128,6 +131,7 @@ node:
                 ipv4: "10.1.2.2/32"
         bgp:
             asn: 4200000122
+            leafs: ["swp4"]
 
     chassis01-lc3-1:
         interfaces:
@@ -135,6 +139,7 @@ node:
                 ipv4: "10.1.3.1/32"
         bgp:
             asn: 4200000131
+            leafs: ["swp5"]
 
     chassis01-lc3-2:
         interfaces:
@@ -142,6 +147,7 @@ node:
                 ipv4: "10.1.3.2/32"
         bgp:
             asn: 4200000132
+            leafs: ["swp6"]
 
     chassis01-lc4-1:
         interfaces:
@@ -191,6 +197,7 @@ node:
                 ipv4: "10.2.1.1/32"
         bgp:
             asn: 4200000211
+            leafs: ["swp1"]
 
     chassis02-lc1-2:
         interfaces:
@@ -198,6 +205,7 @@ node:
                 ipv4: "10.2.1.2/32"
         bgp:
             asn: 4200000212
+            leafs: ["swp2"]
 
     chassis02-lc2-1:
         interfaces:
@@ -205,6 +213,7 @@ node:
                 ipv4: "10.2.2.1/32"
         bgp:
             asn: 4200000221
+            leafs: ["swp3"]
 
     chassis02-lc2-2:
         interfaces:
@@ -212,6 +221,7 @@ node:
                 ipv4: "10.2.2.2/32"
         bgp:
             asn: 4200000222
+            leafs: ["swp4"]
 
     chassis02-lc3-1:
         interfaces:
@@ -219,6 +229,7 @@ node:
                 ipv4: "10.2.3.1/32"
         bgp:
             asn: 4200000231
+            leafs: ["swp5"]
 
     chassis02-lc3-2:
         interfaces:
@@ -226,6 +237,7 @@ node:
                 ipv4: "10.2.3.2/32"
         bgp:
             asn: 4200000232
+            leafs: ["swp6"]
 
     chassis02-lc4-1:
         interfaces:
@@ -276,6 +288,7 @@ node:
 
         bgp:
             asn: 4200000311
+            leafs: ["swp1"]
 
     chassis03-lc1-2:
         interfaces:
@@ -284,6 +297,7 @@ node:
 
         bgp:
             asn: 4200000312
+            leafs: ["swp2"]
 
     chassis03-lc2-1:
         interfaces:
@@ -292,6 +306,7 @@ node:
 
         bgp:
             asn: 4200000321
+            leafs: ["swp3"]
 
     chassis03-lc2-2:
         interfaces:
@@ -300,6 +315,7 @@ node:
 
         bgp:
             asn: 4200000322
+            leafs: ["swp4"]
 
     chassis03-lc3-1:
         interfaces:
@@ -308,6 +324,7 @@ node:
 
         bgp:
             asn: 4200000331
+            leafs: ["swp5"]
 
     chassis03-lc3-2:
         interfaces:
@@ -316,6 +333,7 @@ node:
 
         bgp:
             asn: 4200000332
+            leafs: ["swp6"]
 
     chassis03-lc4-1:
         interfaces:
@@ -372,6 +390,7 @@ node:
 
         bgp:
             asn: 4200000411
+            leafs: ["swp1"]
 
     chassis04-lc1-2:
         interfaces:
@@ -380,6 +399,7 @@ node:
 
         bgp:
             asn: 4200000412
+            leafs: ["swp2"]
 
     chassis04-lc2-1:
         interfaces:
@@ -388,6 +408,7 @@ node:
 
         bgp:
             asn: 4200000421
+            leafs: ["swp3"]
 
     chassis04-lc2-2:
         interfaces:
@@ -396,6 +417,7 @@ node:
 
         bgp:
             asn: 4200000422
+            leafs: ["swp4"]
 
     chassis04-lc3-1:
         interfaces:
@@ -404,6 +426,7 @@ node:
 
         bgp:
             asn: 4200000431
+            leafs: ["swp5"]
 
     chassis04-lc3-2:
         interfaces:
@@ -412,6 +435,7 @@ node:
 
         bgp:
             asn: 4200000432
+            leafs: ["swp6"]
 
     chassis04-lc4-1:
         interfaces:
