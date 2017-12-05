@@ -370,7 +370,7 @@ node:
     chassis03-fc3-1:
         interfaces:
             lo:
-                ipv4: "10.3.255.1/32"
+                ipv4: "10.3.255.3/32"
 
         bgp:
             asn: 4200000300
@@ -378,7 +378,7 @@ node:
     chassis03-fc4-1:
         interfaces:
             lo:
-                ipv4: "10.3.255.1/32"
+                ipv4: "10.3.255.4/32"
 
         bgp:
             asn: 4200000300
