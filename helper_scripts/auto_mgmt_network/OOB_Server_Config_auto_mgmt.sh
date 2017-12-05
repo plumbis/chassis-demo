@@ -84,10 +84,13 @@ iface lo inet loopback
 auto eth0
 iface eth0 inet dhcp
 
-auto swp1
-iface swp1
+auto eth1
+iface eth1
   address 192.168.200.254/24
 EOT
+
+sudo ifreload -a
+
 
 echo " ### Overwriting DNS Server to 8.8.8.8 ###"
 #Required because the installation of DNSmasq throws off DNS momentarily
@@ -167,6 +170,9 @@ fi
 
 chmod +x /home/cumulus/turnup.sh
 
+rm /home/cumulus/turnup.sh
+rm /home/cumulus/a
+
 echo " ### creating .gitconfig for cumulus user"
 cat <<EOT >> /home/cumulus/.gitconfig
 [push]
@@ -182,7 +188,6 @@ EOT
 sed -i 's/users_with_edit = root, cumulus/users_with_edit = root, cumulus, vagrant/g' /etc/netd.conf
 sed -i 's/users_with_show = root, cumulus/users_with_show = root, cumulus, vagrant/g' /etc/netd.conf
 
-sudo ifreload -a
 
 echo "############################################"
 echo "      DONE!"
