@@ -155,6 +155,7 @@ node:
                 ipv4: "10.1.4.1/32"
         bgp:
             asn: 4200000141
+            leafs: []
 
     chassis01-lc4-2:
         interfaces:
@@ -162,6 +163,7 @@ node:
                 ipv4: "10.1.4.2/32"
         bgp:
             asn: 4200000142
+            leafs: []
 
     chassis01-fc1-1:
         interfaces:
@@ -245,6 +247,7 @@ node:
                 ipv4: "10.2.4.1/32"
         bgp:
             asn: 4200000241
+            leafs: []
 
     chassis02-lc4-2:
         interfaces:
@@ -252,6 +255,7 @@ node:
                 ipv4: "10.2.4.2/32"
         bgp:
             asn: 4200000242
+            leafs: []
 
     chassis02-fc1-1:
         interfaces:
@@ -342,6 +346,7 @@ node:
 
         bgp:
             asn: 4200000341
+            leafs: []
 
     chassis03-lc4-2:
         interfaces:
@@ -350,6 +355,7 @@ node:
 
         bgp:
             asn: 4200000342
+            leafs: []
 
     chassis03-fc1-1:
         interfaces:
@@ -444,6 +450,7 @@ node:
 
         bgp:
             asn: 4200000441
+            leafs: []
 
     chassis04-lc4-2:
         interfaces:
@@ -452,6 +459,7 @@ node:
 
         bgp:
             asn: 4200000442
+            leafs: []
 
     chassis04-fc1-1:
         interfaces:
