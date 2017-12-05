@@ -197,7 +197,7 @@ class "onie-vendor-classes" {
 shared-network LOCAL-NET{
 
 subnet 192.168.0.0 netmask 255.255.255.0 {
-  range 192.168.0.201 192.168.0.250;
+  range 192.168.0.1 192.168.0.250;
   option domain-name-servers 192.168.0.254;
   option domain-name "simulation";
   default-lease-time 172800;  #2 days
