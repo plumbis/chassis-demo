@@ -4,8 +4,8 @@
 # other return code is unknown
 - name: Check if NTP is already in the vr
   shell: "vrf task list | grep ntpd"
-  register: ntp-vrf
-  failed_when: ntp-vrf.rc >= 2
+  register: ntp_vrf
+  failed_when: ntp_vrf.rc >= 2
 
 - name: Configured NTP in management VRF
   command: "{{item}}"
@@ -13,7 +13,7 @@
     - systemctl stop ntp.service
     - systemctl disable ntp.service
     - systemctl start ntp@mgmt
-  when: ntp-vrf.rc != 0
+  when: ntp_vrf.rc != 0
 
 - name: Add Cumulus Repo
   apt_repository:
@@ -39,8 +39,8 @@
 
 - name: Check if Netqd is running in the VRF
   shell: "vrf task list | grep netqd"
-  register: netqd-vrf
-  failed_when: netqd-vrf.rc >= 2
+  register: netqd_vrf
+  failed_when: netqd_vrf.rc >= 2
 
 - name: Restart Netqd
   command: "{{ item }}"
@@ -49,7 +49,7 @@
     - systemctl disable netqd.service
     - systemctl enable netqd@mgmt.service
     - systemctl start netqd@mgmt.service
-  when: netqd-vrf.rc == 1
+  when: netqd_vrf.rc == 1
 
 - name: Add netq server IP
   command: netq config add server {{netq.server}} vrf mgmt
