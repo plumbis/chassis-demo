@@ -479,6 +479,10 @@ EOT
 
 apt-get clean -y
 
+rm /home/cumulus/a
+git clone -b /home/cumulus/chassis-demo https://github.com/plumbis/chassis-demo
+chown cumulus /home/cumulus/chassis-demo
+
 echo "############################################"
 echo "      DONE!"
 echo "############################################"
