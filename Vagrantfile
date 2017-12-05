@@ -94,13 +94,10 @@ Vagrant.configure("2") do |config|
 
 
 
-
-  ##### DEFINE VM for oob-mgmt-server #####
+##### DEFINE VM for oob-mgmt-server #####
   config.vm.define "oob-mgmt-server" do |device|
-
     device.vm.hostname = "oob-mgmt-server"
-
-    device.vm.box = "cumulus/ts"
+    device.vm.box = "cumulus_ts_1.1.0"
 
     device.vm.provider :libvirt do |v|
       v.memory = 1024
@@ -127,21 +124,18 @@ Vagrant.configure("2") do |config|
     # Fixes "stdin: is not a tty" and "mesg: ttyname failed : Inappropriate ioctl for device"  messages --> https://github.com/mitchellh/vagrant/issues/1673
     device.vm.provision :shell , inline: "(sudo grep -q 'mesg n' /root/.profile 2>/dev/null && sudo sed -i '/mesg n/d' /root/.profile  2>/dev/null) || true;", privileged: false
 
-    # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
-    device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
-
-    #Copy over DHCP files and MGMT Network Files
-    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/dhcpd.conf", destination: "~/dhcpd.conf"
-    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/dhcpd.hosts", destination: "~/dhcpd.hosts"
-    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/hosts", destination: "~/hosts"
-    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/ansible_hostfile", destination: "~/ansible_hostfile"
-    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/ztp_oob.sh", destination: "~/ztp_oob.sh"
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/auto_mgmt_network/OOB_Server_Config_auto_mgmt.sh"
+    device.vm.provision :shell , path: "./helper_scripts/TS_OOB_SERVER.sh"
+
+
+    # Install Rules for the interface re-map
+    # REMAP Disabled for this node
+    # NO REMAP APPLICATION Required
 
 end
+
 
   ##### DEFINE VM for oob-mgmt-switch #####
   config.vm.define "oob-mgmt-switch" do |device|
