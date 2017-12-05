@@ -5,8 +5,17 @@ echo "  Running Extra_Server_Config.sh"
 echo "#################################"
 sudo su
 
-adduser cumulus -m 
+useradd cumulus -m -s /bin/bash
 echo "cumulus:CumulusLinux!" | chpasswd
+
+## Convenience code. This is normally done in ZTP.
+echo "cumulus ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/10_cumulus
+mkdir /home/cumulus/.ssh
+echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC+jYFfxnEk+w5OK2u7kpCFGrPStree4O1DHIdyTmaDSnt6Kwr9eT5I/07vHPFfTE/5hvRvsa9pj94K12jUnh1oCXOQHpyauAt9WIRygzW7fRVXYn65egR0JF1RzZSigri/z9GgabtNn27F7nRjQpVtXag2f4qzd6y+aIQoIKN9eFJ3ssoD+9YFR5Zjcp3ScBPfXGy/dkUVatDq8+B0R2KxcSCrJcH+l+QEhNIY/tCTDZMV4fdFkuXjQ40eqQQpiJ+i51ZvAZeK3M4otPzg1q+x8gvh4syg762EY5BDSa2fJ5My2tOOBoiaTwROijtODesMHa40DKbxPaduqQVV1Piv root@oob-mgmt-server" >> /home/cumulus/.ssh/authorized_keys
+chmod 700 -R /home/cumulus
+chown -R cumulus:cumulus /home/cumulus
+chmod 600 /home/cumulus/.ssh/*
+chmod 700 /home/cumulus/.ssh
 
 #Test for Debian-Based Host
 which apt &> /dev/null
