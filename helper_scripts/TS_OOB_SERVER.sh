@@ -67,6 +67,8 @@ iface swp1
 
 EOT
 
+sudo ifreload -a
+
 echo " ### Overwriting DNS Server to 8.8.8.8 ###"
 #Required because the installation of DNSmasq throws off DNS momentarily
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
