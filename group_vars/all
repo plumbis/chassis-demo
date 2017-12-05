@@ -12,7 +12,95 @@ fabriccards:
                    fp15, fp16, fp17, fp18, fp19, fp20, fp21,
                    fp22, fp23, fp24, fp25, fp26, fp27, fp28, fp29, fp30, fp31]
 
+leafs:
+    server_ports: ["swp1", "swp2"]
+    fabric_ports: ["swp51", "swp52", "swp53", "swp54"]
+
 node:
+    leaf01:
+        interfaces:
+            lo:
+                ipv4: "10.0.0.1/32"
+        bgp:
+            asn: 65011
+
+    leaf02:
+        interfaces:
+            lo:
+                ipv4: "10.0.0.2/32"
+        bgp:
+            asn: 65012
+
+    leaf03:
+        interfaces:
+            lo:
+                ipv4: "10.0.0.3/32"
+        bgp:
+            asn: 65013
+
+    leaf04:
+        interfaces:
+            lo:
+                ipv4: "10.0.0.4/32"
+        bgp:
+            asn: 65014
+
+    leaf05:
+        interfaces:
+            lo:
+                ipv4: "10.0.0.5/32"
+        bgp:
+            asn: 65015
+
+    leaf06:
+        interfaces:
+            lo:
+                ipv4: "10.0.0.6/32"
+        bgp:
+            asn: 65016
+
+    server01:
+        interfaces:
+            lo:
+                ipv4: "172.16.1.1/32"
+        bgp:
+            asn: 65001
+
+    server02:
+        interfaces:
+            lo:
+                ipv4: "172.16.1.2/32"
+        bgp:
+            asn: 65002
+
+    server03:
+        interfaces:
+            lo:
+                ipv4: "172.16.1.3/32"
+        bgp:
+            asn: 65003
+
+    server04:
+        interfaces:
+            lo:
+                ipv4: "172.16.1.4/32"
+        bgp:
+            asn: 65004
+
+    server05:
+        interfaces:
+            lo:
+                ipv4: "172.16.1.5/32"
+        bgp:
+            asn: 65005
+
+    server06:
+        interfaces:
+            lo:
+                ipv4: "172.16.1.6/32"
+        bgp:
+            asn: 65006
+
     chassis01-lc1-1:
         interfaces:
             lo:

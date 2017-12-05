@@ -17,3 +17,12 @@
     - network_netq
   handlers:
     - include: handlers/main.yml
+
+- hosts: leafs
+  become: yes
+  roles:
+    - global_common
+    - leaf_common
+    - network_netq
+  handlers:
+    - include: handlers/main.yml
