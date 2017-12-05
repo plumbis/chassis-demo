@@ -1,0 +1,152 @@
+---
+- name: Copy Interface Config
+  copy:
+    src: configurations/{{ansible_hostname}}/interfaces
+    dest: /etc/network/interfaces
+  register: reboot
+
+  - name: Correct LLDP Settings
+    lineinfile:
+      dest: /etc/lldpd.d/port_info.conf
+      line: "configure lldp portidsubtype ifname"
+      create: yes
+    notify: restart LLDP
+
+  - name: Apply LLDP Settings
+    meta: flush_handlers
+
+  - name: Install Docker-CE Repo Key
+    apt_key:
+      url: "https://download.docker.com/linux/ubuntu/gpg"
+      state: present
+
+  - name: Add Docker Repo
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
+      state: present
+      update_cache: no
+
+  - name: Add Cumulus Apt Key
+    apt_key:
+      url: "https://apps3.cumulusnetworks.com/setup/cumulus-apps-deb.pubkey"
+      state: present
+
+  - name: Add Cumulus Repo
+    apt_repository:
+      repo: deb https://apps3.cumulusnetworks.com/repos/deb xenial netq-1.2
+      update_cache: no
+      state: present
+
+  - name: Install NetQ, DockerCE, ifupdown2, pip
+    apt:
+      name: "{{item}}"
+      update_cache: yes
+    with_items:
+      - docker-ce
+      - ifupdown2
+      - cumulus-netq
+      - python-pip
+
+  - name: Install docker-py module
+    pip:
+      name: docker-py
+
+  - name: Enable ifupdown2
+    service:
+      name: networking
+      enabled: yes
+
+  - name: Restart Rsyslog
+    service:
+      name: rsyslog
+      state: restarted
+
+  - name: Enable NetQ Service
+    service:
+      name: netqd
+      enabled: yes
+      state: started
+    register: netq_started
+
+  - name: Pause to let NetQ service to start
+    pause:
+      seconds: 5
+    when: netq_started.changed
+
+  - name: Add netq server IP
+    command: netq config add server 192.168.0.254
+    when: netq_started.changed
+
+  - name: Restart NetQ Agent
+    command: netq config agent restart
+    when: netq_started.changed
+
+  - name: Add Docker settings to NetQ
+    blockinfile:
+      block: |
+        docker:
+          enable: true
+          poll_period: 10
+      dest: /etc/netq/netq.yml
+    register: netq_docker
+
+  - name: Apply NetQ Docker Settings
+    command: netq config agent restart
+    when: netq_docker.changed
+
+  - name: Start Docker
+    service:
+      name: docker
+      state: started
+      enabled: yes
+
+  - name: Enable ifupdown2 after reboot
+    lineinfile:
+      dest: "/lib/systemd/system/networking.service"
+      regexp: '^RemainAfterExit'
+      insertafter: '^\[Service\]'
+      line: 'RemainAfterExit=yes'
+
+  - name: Enable network interfaces
+    command: ifup {{item}}
+    ignore_errors: yes
+    with_items:
+      - eth1
+      - eth2
+      - lo
+
+  - name: Create Quagga configuration directory
+    file:
+      path: /etc/quagga
+      state: directory
+      mode: 0775
+
+  - name: Copy Quagga daemons File
+    copy:
+      src: configurations/{{ansible_hostname}}/daemons
+      dest: /etc/quagga/daemons
+
+  - name: Copy Quagga configuration File
+    copy:
+      src: configurations/{{ansible_hostname}}/quagga.conf
+      dest: /etc/quagga/Quagga.conf
+
+  - name: Deploy ROH Container
+    docker_container:
+      name: cumulus-roh
+      privileged: true
+      interactive: true
+      network_mode: host
+      restart_policy: unless-stopped
+      tty: true
+      recreate: yes
+      image: cumulusnetworks/quagga:latest
+      volumes:
+        - "/etc/quagga/daemons:/etc/quagga/daemons"
+        - "/etc/quagga/Quagga.conf:/etc/quagga/Quagga.conf"
+
+handlers:
+    - name: restart LLDP
+      service:
+        name: lldpd
+        state: restarted
