@@ -440,7 +440,7 @@ node:
     chassis04-fc2-1:
         interfaces:
             lo:
-                ipv4: "10.4.255.1/32"
+                ipv4: "10.4.255.2/32"
 
         bgp:
             asn: 4200000400
@@ -448,7 +448,7 @@ node:
     chassis04-fc3-1:
         interfaces:
             lo:
-                ipv4: "10.4.255.1/32"
+                ipv4: "10.4.255.3/32"
 
         bgp:
             asn: 4200000400
@@ -456,7 +456,7 @@ node:
     chassis04-fc4-1:
         interfaces:
             lo:
-                ipv4: "10.4.255.1/32"
+                ipv4: "10.4.255.4/32"
 
         bgp:
             asn: 4200000400
