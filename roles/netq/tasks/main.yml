@@ -23,7 +23,7 @@
     state: restarted
 
 - name: Add netq server IP
-  command: netq config add server 192.168.0.254 vrf mgmt
+  command: netq config add server {{netq.server}} vrf mgmt
 
 - name: Restart NetQ Agent
   command: netq config agent restart
