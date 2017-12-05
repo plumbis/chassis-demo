@@ -458,19 +458,18 @@ trap error ERR
 #Setup SSH key authentication for Ansible
 mkdir -p /home/cumulus/.ssh
 wget -O /home/cumulus/.ssh/authorized_keys http://192.168.200.254/authorized_keys
-#echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCzH+R+UhjVicUtI0daNUcedYhfvgT1dbZXgY33Ibm4MOo+X84Iwuzirm3QFnYf2O3uyZjNyrA6fj9qFE7Ekul4bD6PCstQupXPwfPMjns2M7tkHsKnLYjNxWNql/rCUxoH2B6nPyztcRCass3lIc2clfXkCY9Jtf7kgC2e/dmchywPV5PrFqtlHgZUnyoPyWBH7OjPLVxYwtCJn96sFkrjaG9QDOeoeiNvcGlk4DJp/g9L4f2AaEq69x8+gBTFUqAFsD8ecO941cM8sa1167rsRPx7SK3270Ji5EUF3lZsgpaiIgMhtIB/7QNTkN9ZjQBazxxlNVN6WthF8okb7OSt" >> /home/cumulus/.ssh/authorized_keys
 chmod 700 -R /home/cumulus/.ssh
 chown cumulus:cumulus -R /home/cumulus/.ssh
 
 echo "cumulus ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/10_cumulus
 
 sed -i '/iface eth0/a \ vrf mgmt' /etc/network/interfaces
-cat <<EOT >> /etc/network/interfaces
+cat <<XYZ >> /etc/network/interfaces
 auto mgmt
 iface mgmt
   address 127.0.0.1/8
   vrf-table auto
-EOT
+XYZ
 
 
 nohup bash -c 'sleep 2; shutdown now -r "Rebooting to Complete ZTP"' &
