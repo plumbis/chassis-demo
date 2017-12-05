@@ -48,15 +48,15 @@
 192.168.200.50 chassis03-lc2-2
 192.168.200.51 chassis01-lc4-2
 192.168.200.52 chassis01-lc4-1
-192.168.200.53 chassis01-lc2-1
-192.168.200.54 chassis03-lc4-1
-192.168.200.55 chassis01-lc2-2
-192.168.200.56 chassis01-lc3-1
-192.168.200.57 chassis01-lc3-2
-192.168.200.58 chassis02-fc4-1
-192.168.200.59 chassis04-lc4-1
-192.168.200.60 chassis04-lc4-2
-192.168.200.61 chassis03-lc4-2
+192.168.200.54 chassis01-lc2-1
+192.168.200.55 chassis03-lc4-1
+192.168.200.56 chassis01-lc2-2
+192.168.200.57 chassis01-lc3-1
+192.168.200.58 chassis01-lc3-2
+192.168.200.59 chassis02-fc4-1
+192.168.200.60 chassis04-lc4-1
+192.168.200.61 chassis04-lc4-2
+192.168.200.62 chassis03-lc4-2
 192.168.200.36 leaf06
 192.168.200.37 leaf04
 192.168.200.38 leaf05
@@ -69,6 +69,7 @@
 192.168.200.16 server05
 192.168.200.19 server06
 192.168.200.29 server04
+192.168.200.53 netq-ts
 
 
 # The following lines are desirable for IPv6 capable hosts

@@ -65,15 +65,15 @@ chassis03-fc1-1 ansible_host=192.168.200.49 ansible_user=cumulus
 chassis03-lc2-2 ansible_host=192.168.200.50 ansible_user=cumulus
 chassis01-lc4-2 ansible_host=192.168.200.51 ansible_user=cumulus
 chassis01-lc4-1 ansible_host=192.168.200.52 ansible_user=cumulus
-chassis01-lc2-1 ansible_host=192.168.200.53 ansible_user=cumulus
-chassis03-lc4-1 ansible_host=192.168.200.54 ansible_user=cumulus
-chassis01-lc2-2 ansible_host=192.168.200.55 ansible_user=cumulus
-chassis01-lc3-1 ansible_host=192.168.200.56 ansible_user=cumulus
-chassis01-lc3-2 ansible_host=192.168.200.57 ansible_user=cumulus
-chassis02-fc4-1 ansible_host=192.168.200.58 ansible_user=cumulus
-chassis04-lc4-1 ansible_host=192.168.200.59 ansible_user=cumulus
-chassis04-lc4-2 ansible_host=192.168.200.60 ansible_user=cumulus
-chassis03-lc4-2 ansible_host=192.168.200.61 ansible_user=cumulus
+chassis01-lc2-1 ansible_host=192.168.200.54 ansible_user=cumulus
+chassis03-lc4-1 ansible_host=192.168.200.55 ansible_user=cumulus
+chassis01-lc2-2 ansible_host=192.168.200.56 ansible_user=cumulus
+chassis01-lc3-1 ansible_host=192.168.200.57 ansible_user=cumulus
+chassis01-lc3-2 ansible_host=192.168.200.58 ansible_user=cumulus
+chassis02-fc4-1 ansible_host=192.168.200.59 ansible_user=cumulus
+chassis04-lc4-1 ansible_host=192.168.200.60 ansible_user=cumulus
+chassis04-lc4-2 ansible_host=192.168.200.61 ansible_user=cumulus
+chassis03-lc4-2 ansible_host=192.168.200.62 ansible_user=cumulus
 
 
 
@@ -86,3 +86,4 @@ server02 ansible_host=192.168.200.15 ansible_user=cumulus
 server05 ansible_host=192.168.200.16 ansible_user=cumulus
 server06 ansible_host=192.168.200.19 ansible_user=cumulus
 server04 ansible_host=192.168.200.29 ansible_user=cumulus
+netq-ts ansible_host=192.168.200.53 ansible_user=cumulus

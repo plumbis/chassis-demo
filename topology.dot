@@ -64,6 +64,7 @@ graph dc1 {
  "server04" [function="host" os="yk0/ubuntu-xenial" memory="512" config="./helper_scripts/extra_server_config.sh" ]
  "server05" [function="host" os="yk0/ubuntu-xenial" memory="512" config="./helper_scripts/extra_server_config.sh" ]
  "server06" [function="host" os="yk0/ubuntu-xenial" memory="512" config="./helper_scripts/extra_server_config.sh" ]
+ "netq-ts"  [function="host" os="cumulus/ts" memory="1024" ]
 
  "leaf01":"swp51" -- "chassis01-lc1-1":"swp1"
  "leaf01":"swp52" -- "chassis02-lc1-1":"swp1"

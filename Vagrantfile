@@ -2,7 +2,7 @@
 #    Template Revision: v4.6.5
 #    https://github.com/cumulusnetworks/topology_converter
 #    using topology data from: topology.dot
-#    built with the following args: topology_converter.py -c -p libvirt -s 20930 topology.dot
+#    built with the following args: topology_converter.py -p libvirt -c -s 30000 topology.dot
 #
 #    NOTE: in order to use this Vagrantfile you will need:
 #       -Vagrant(v1.8.6+) installed: http://www.vagrantup.com/downloads
@@ -61,7 +61,7 @@ if grep -q -i 'cumulus' /etc/lsb-release &> /dev/null; then
         echo "  INFO: Detected Cumulus Linux v$DISTRIB_RELEASE Release"
         if [[ $DISTRIB_RELEASE =~ ^3.[1-9].* ]]; then
             echo "### Fixing ONIE DHCP to avoid Vagrant Interface ###"
-            echo "     Note: Installing from ONIE will undo these changes."
+            echo "     Note: Installing from ONIE will undo these changes." 
             mkdir /tmp/foo
             mount LABEL=ONIE-BOOT /tmp/foo
             sed -i 's/eth0/eth1/g' /tmp/foo/grub/grub.cfg
@@ -94,13 +94,16 @@ Vagrant.configure("2") do |config|
 
 
 
-##### DEFINE VM for oob-mgmt-server #####
+
+  ##### DEFINE VM for oob-mgmt-server #####
   config.vm.define "oob-mgmt-server" do |device|
-    device.vm.hostname = "oob-mgmt-server"
-    device.vm.box = "cumulus/ts"
+    
+    device.vm.hostname = "oob-mgmt-server" 
+    
+    device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.memory = 1024
+      v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
     device.vm.synced_folder ".", "/vagrant", disabled: true
@@ -113,9 +116,9 @@ Vagrant.configure("2") do |config|
             :mac => "44:38:39:00:04:4a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22486',
+            :libvirt__tunnel_local_port => '31556',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21486',
+            :libvirt__tunnel_port => '30556',
             :libvirt__iface_name => 'eth1',
             auto_config: false
 
@@ -124,24 +127,52 @@ Vagrant.configure("2") do |config|
     # Fixes "stdin: is not a tty" and "mesg: ttyname failed : Inappropriate ioctl for device"  messages --> https://github.com/mitchellh/vagrant/issues/1673
     device.vm.provision :shell , inline: "(sudo grep -q 'mesg n' /root/.profile 2>/dev/null && sudo sed -i '/mesg n/d' /root/.profile  2>/dev/null) || true;", privileged: false
 
+    # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
+    device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
+
+    #Copy over DHCP files and MGMT Network Files
+    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/dhcpd.conf", destination: "~/dhcpd.conf"
+    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/dhcpd.hosts", destination: "~/dhcpd.hosts"
+    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/hosts", destination: "~/hosts"
+    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/ansible_hostfile", destination: "~/ansible_hostfile"
+    device.vm.provision "file", source: "./helper_scripts/auto_mgmt_network/ztp_oob.sh", destination: "~/ztp_oob.sh"
 
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
-    device.vm.provision :shell , path: "./helper_scripts/TS_OOB_SERVER.sh"
+    device.vm.provision :shell , path: "./helper_scripts/auto_mgmt_network/OOB_Server_Config_auto_mgmt.sh"
 
 
     # Install Rules for the interface re-map
-    # REMAP Disabled for this node
-    # NO REMAP APPLICATION Required
+    device.vm.provision :shell , :inline => <<-delete_udev_directory
+if [ -d "/etc/udev/rules.d/70-persistent-net.rules" ]; then
+    rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
+fi
+rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
+delete_udev_directory
+
+device.vm.provision :shell , :inline => <<-udev_rule
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:4a --> eth1"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:4a", NAME="eth1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+udev_rule
+     
+      device.vm.provision :shell , :inline => <<-vagrant_interface_rule
+echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "#### UDEV Rules (/etc/udev/rules.d/70-persistent-net.rules) ####"
+cat /etc/udev/rules.d/70-persistent-net.rules
+vagrant_interface_rule
+
+# Run Any Platform Specific Code and Apply the interface Re-map
+    #   (may or may not perform a reboot depending on platform)
+    device.vm.provision :shell , :inline => $script
 
 end
 
-
   ##### DEFINE VM for oob-mgmt-switch #####
   config.vm.define "oob-mgmt-switch" do |device|
-
-    device.vm.hostname = "oob-mgmt-switch"
-
+    
+    device.vm.hostname = "oob-mgmt-switch" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
 
     device.vm.provider :libvirt do |v|
@@ -158,9 +189,9 @@ end
             :mac => "44:38:39:00:04:49",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21486',
+            :libvirt__tunnel_local_port => '30556',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22486',
+            :libvirt__tunnel_port => '31556',
             :libvirt__iface_name => 'swp1',
             auto_config: false
       # link for swp2 --> chassis02-lc1-1:eth0
@@ -168,9 +199,9 @@ end
             :mac => "44:38:39:00:04:4b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21487',
+            :libvirt__tunnel_local_port => '30557',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22487',
+            :libvirt__tunnel_port => '31557',
             :libvirt__iface_name => 'swp2',
             auto_config: false
       # link for swp3 --> chassis03-lc1-1:eth0
@@ -178,9 +209,9 @@ end
             :mac => "44:38:39:00:04:4d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21488',
+            :libvirt__tunnel_local_port => '30558',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22488',
+            :libvirt__tunnel_port => '31558',
             :libvirt__iface_name => 'swp3',
             auto_config: false
       # link for swp4 --> chassis02-fc1-1:eth0
@@ -188,9 +219,9 @@ end
             :mac => "44:38:39:00:04:4f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21489',
+            :libvirt__tunnel_local_port => '30559',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22489',
+            :libvirt__tunnel_port => '31559',
             :libvirt__iface_name => 'swp4',
             auto_config: false
       # link for swp5 --> chassis02-lc1-2:eth0
@@ -198,9 +229,9 @@ end
             :mac => "44:38:39:00:04:51",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21490',
+            :libvirt__tunnel_local_port => '30560',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22490',
+            :libvirt__tunnel_port => '31560',
             :libvirt__iface_name => 'swp5',
             auto_config: false
       # link for swp6 --> chassis02-fc3-1:eth0
@@ -208,9 +239,9 @@ end
             :mac => "44:38:39:00:04:53",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21491',
+            :libvirt__tunnel_local_port => '30561',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22491',
+            :libvirt__tunnel_port => '31561',
             :libvirt__iface_name => 'swp6',
             auto_config: false
       # link for swp7 --> chassis03-lc3-1:eth0
@@ -218,9 +249,9 @@ end
             :mac => "44:38:39:00:04:55",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21492',
+            :libvirt__tunnel_local_port => '30562',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22492',
+            :libvirt__tunnel_port => '31562',
             :libvirt__iface_name => 'swp7',
             auto_config: false
       # link for swp8 --> chassis02-lc2-2:eth0
@@ -228,9 +259,9 @@ end
             :mac => "44:38:39:00:04:57",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21493',
+            :libvirt__tunnel_local_port => '30563',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22493',
+            :libvirt__tunnel_port => '31563',
             :libvirt__iface_name => 'swp8',
             auto_config: false
       # link for swp9 --> chassis02-fc2-1:eth0
@@ -238,9 +269,9 @@ end
             :mac => "44:38:39:00:04:59",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21494',
+            :libvirt__tunnel_local_port => '30564',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22494',
+            :libvirt__tunnel_port => '31564',
             :libvirt__iface_name => 'swp9',
             auto_config: false
       # link for swp10 --> chassis02-lc2-1:eth0
@@ -248,9 +279,9 @@ end
             :mac => "44:38:39:00:04:5b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21495',
+            :libvirt__tunnel_local_port => '30565',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22495',
+            :libvirt__tunnel_port => '31565',
             :libvirt__iface_name => 'swp10',
             auto_config: false
       # link for swp11 --> chassis04-lc3-1:eth0
@@ -258,9 +289,9 @@ end
             :mac => "44:38:39:00:04:5d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21496',
+            :libvirt__tunnel_local_port => '30566',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22496',
+            :libvirt__tunnel_port => '31566',
             :libvirt__iface_name => 'swp11',
             auto_config: false
       # link for swp12 --> chassis04-fc1-1:eth0
@@ -268,9 +299,9 @@ end
             :mac => "44:38:39:00:04:5f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21497',
+            :libvirt__tunnel_local_port => '30567',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22497',
+            :libvirt__tunnel_port => '31567',
             :libvirt__iface_name => 'swp12',
             auto_config: false
       # link for swp13 --> chassis03-fc4-1:eth0
@@ -278,9 +309,9 @@ end
             :mac => "44:38:39:00:04:61",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21498',
+            :libvirt__tunnel_local_port => '30568',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22498',
+            :libvirt__tunnel_port => '31568',
             :libvirt__iface_name => 'swp13',
             auto_config: false
       # link for swp14 --> server01:eth0
@@ -288,9 +319,9 @@ end
             :mac => "44:38:39:00:04:63",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21499',
+            :libvirt__tunnel_local_port => '30569',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22499',
+            :libvirt__tunnel_port => '31569',
             :libvirt__iface_name => 'swp14',
             auto_config: false
       # link for swp15 --> server03:eth0
@@ -298,9 +329,9 @@ end
             :mac => "44:38:39:00:04:65",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21500',
+            :libvirt__tunnel_local_port => '30570',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22500',
+            :libvirt__tunnel_port => '31570',
             :libvirt__iface_name => 'swp15',
             auto_config: false
       # link for swp16 --> server02:eth0
@@ -308,9 +339,9 @@ end
             :mac => "44:38:39:00:04:67",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21501',
+            :libvirt__tunnel_local_port => '30571',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22501',
+            :libvirt__tunnel_port => '31571',
             :libvirt__iface_name => 'swp16',
             auto_config: false
       # link for swp17 --> server05:eth0
@@ -318,9 +349,9 @@ end
             :mac => "44:38:39:00:04:69",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21502',
+            :libvirt__tunnel_local_port => '30572',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22502',
+            :libvirt__tunnel_port => '31572',
             :libvirt__iface_name => 'swp17',
             auto_config: false
       # link for swp18 --> chassis04-lc2-1:eth0
@@ -328,9 +359,9 @@ end
             :mac => "44:38:39:00:04:6b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21503',
+            :libvirt__tunnel_local_port => '30573',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22503',
+            :libvirt__tunnel_port => '31573',
             :libvirt__iface_name => 'swp18',
             auto_config: false
       # link for swp19 --> chassis03-lc2-1:eth0
@@ -338,9 +369,9 @@ end
             :mac => "44:38:39:00:04:6d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21504',
+            :libvirt__tunnel_local_port => '30574',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22504',
+            :libvirt__tunnel_port => '31574',
             :libvirt__iface_name => 'swp19',
             auto_config: false
       # link for swp20 --> server06:eth0
@@ -348,9 +379,9 @@ end
             :mac => "44:38:39:00:04:6f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21505',
+            :libvirt__tunnel_local_port => '30575',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22505',
+            :libvirt__tunnel_port => '31575',
             :libvirt__iface_name => 'swp20',
             auto_config: false
       # link for swp21 --> chassis01-fc4-1:eth0
@@ -358,9 +389,9 @@ end
             :mac => "44:38:39:00:04:71",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21506',
+            :libvirt__tunnel_local_port => '30576',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22506',
+            :libvirt__tunnel_port => '31576',
             :libvirt__iface_name => 'swp21',
             auto_config: false
       # link for swp22 --> chassis01-fc1-1:eth0
@@ -368,9 +399,9 @@ end
             :mac => "44:38:39:00:04:73",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21507',
+            :libvirt__tunnel_local_port => '30577',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22507',
+            :libvirt__tunnel_port => '31577',
             :libvirt__iface_name => 'swp22',
             auto_config: false
       # link for swp23 --> chassis02-lc3-1:eth0
@@ -378,9 +409,9 @@ end
             :mac => "44:38:39:00:04:75",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21508',
+            :libvirt__tunnel_local_port => '30578',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22508',
+            :libvirt__tunnel_port => '31578',
             :libvirt__iface_name => 'swp23',
             auto_config: false
       # link for swp24 --> chassis04-lc3-2:eth0
@@ -388,9 +419,9 @@ end
             :mac => "44:38:39:00:04:77",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21509',
+            :libvirt__tunnel_local_port => '30579',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22509',
+            :libvirt__tunnel_port => '31579',
             :libvirt__iface_name => 'swp24',
             auto_config: false
       # link for swp25 --> chassis03-lc1-2:eth0
@@ -398,9 +429,9 @@ end
             :mac => "44:38:39:00:04:79",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21510',
+            :libvirt__tunnel_local_port => '30580',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22510',
+            :libvirt__tunnel_port => '31580',
             :libvirt__iface_name => 'swp25',
             auto_config: false
       # link for swp26 --> chassis01-fc3-1:eth0
@@ -408,9 +439,9 @@ end
             :mac => "44:38:39:00:04:7b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21511',
+            :libvirt__tunnel_local_port => '30581',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22511',
+            :libvirt__tunnel_port => '31581',
             :libvirt__iface_name => 'swp26',
             auto_config: false
       # link for swp27 --> chassis02-lc4-1:eth0
@@ -418,9 +449,9 @@ end
             :mac => "44:38:39:00:04:7d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21512',
+            :libvirt__tunnel_local_port => '30582',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22512',
+            :libvirt__tunnel_port => '31582',
             :libvirt__iface_name => 'swp27',
             auto_config: false
       # link for swp28 --> chassis02-lc4-2:eth0
@@ -428,9 +459,9 @@ end
             :mac => "44:38:39:00:04:7f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21513',
+            :libvirt__tunnel_local_port => '30583',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22513',
+            :libvirt__tunnel_port => '31583',
             :libvirt__iface_name => 'swp28',
             auto_config: false
       # link for swp29 --> server04:eth0
@@ -438,9 +469,9 @@ end
             :mac => "44:38:39:00:04:81",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21514',
+            :libvirt__tunnel_local_port => '30584',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22514',
+            :libvirt__tunnel_port => '31584',
             :libvirt__iface_name => 'swp29',
             auto_config: false
       # link for swp30 --> chassis03-lc3-2:eth0
@@ -448,9 +479,9 @@ end
             :mac => "44:38:39:00:04:83",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21515',
+            :libvirt__tunnel_local_port => '30585',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22515',
+            :libvirt__tunnel_port => '31585',
             :libvirt__iface_name => 'swp30',
             auto_config: false
       # link for swp31 --> chassis04-fc3-1:eth0
@@ -458,9 +489,9 @@ end
             :mac => "44:38:39:00:04:85",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21516',
+            :libvirt__tunnel_local_port => '30586',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22516',
+            :libvirt__tunnel_port => '31586',
             :libvirt__iface_name => 'swp31',
             auto_config: false
       # link for swp32 --> chassis04-lc2-2:eth0
@@ -468,9 +499,9 @@ end
             :mac => "44:38:39:00:04:87",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21517',
+            :libvirt__tunnel_local_port => '30587',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22517',
+            :libvirt__tunnel_port => '31587',
             :libvirt__iface_name => 'swp32',
             auto_config: false
       # link for swp33 --> chassis01-fc2-1:eth0
@@ -478,9 +509,9 @@ end
             :mac => "44:38:39:00:04:89",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21518',
+            :libvirt__tunnel_local_port => '30588',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22518',
+            :libvirt__tunnel_port => '31588',
             :libvirt__iface_name => 'swp33',
             auto_config: false
       # link for swp34 --> chassis04-fc2-1:eth0
@@ -488,9 +519,9 @@ end
             :mac => "44:38:39:00:04:8b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21519',
+            :libvirt__tunnel_local_port => '30589',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22519',
+            :libvirt__tunnel_port => '31589',
             :libvirt__iface_name => 'swp34',
             auto_config: false
       # link for swp35 --> chassis04-fc4-1:eth0
@@ -498,9 +529,9 @@ end
             :mac => "44:38:39:00:04:8d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21520',
+            :libvirt__tunnel_local_port => '30590',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22520',
+            :libvirt__tunnel_port => '31590',
             :libvirt__iface_name => 'swp35',
             auto_config: false
       # link for swp36 --> leaf06:eth0
@@ -508,9 +539,9 @@ end
             :mac => "44:38:39:00:04:8f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21521',
+            :libvirt__tunnel_local_port => '30591',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22521',
+            :libvirt__tunnel_port => '31591',
             :libvirt__iface_name => 'swp36',
             auto_config: false
       # link for swp37 --> leaf04:eth0
@@ -518,9 +549,9 @@ end
             :mac => "44:38:39:00:04:91",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21522',
+            :libvirt__tunnel_local_port => '30592',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22522',
+            :libvirt__tunnel_port => '31592',
             :libvirt__iface_name => 'swp37',
             auto_config: false
       # link for swp38 --> leaf05:eth0
@@ -528,9 +559,9 @@ end
             :mac => "44:38:39:00:04:93",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21523',
+            :libvirt__tunnel_local_port => '30593',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22523',
+            :libvirt__tunnel_port => '31593',
             :libvirt__iface_name => 'swp38',
             auto_config: false
       # link for swp39 --> leaf02:eth0
@@ -538,9 +569,9 @@ end
             :mac => "44:38:39:00:04:95",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21524',
+            :libvirt__tunnel_local_port => '30594',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22524',
+            :libvirt__tunnel_port => '31594',
             :libvirt__iface_name => 'swp39',
             auto_config: false
       # link for swp40 --> leaf03:eth0
@@ -548,9 +579,9 @@ end
             :mac => "44:38:39:00:04:97",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21525',
+            :libvirt__tunnel_local_port => '30595',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22525',
+            :libvirt__tunnel_port => '31595',
             :libvirt__iface_name => 'swp40',
             auto_config: false
       # link for swp41 --> leaf01:eth0
@@ -558,9 +589,9 @@ end
             :mac => "44:38:39:00:04:99",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21526',
+            :libvirt__tunnel_local_port => '30596',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22526',
+            :libvirt__tunnel_port => '31596',
             :libvirt__iface_name => 'swp41',
             auto_config: false
       # link for swp42 --> chassis02-lc3-2:eth0
@@ -568,9 +599,9 @@ end
             :mac => "44:38:39:00:04:9b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21527',
+            :libvirt__tunnel_local_port => '30597',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22527',
+            :libvirt__tunnel_port => '31597',
             :libvirt__iface_name => 'swp42',
             auto_config: false
       # link for swp43 --> chassis03-fc2-1:eth0
@@ -578,9 +609,9 @@ end
             :mac => "44:38:39:00:04:9d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21528',
+            :libvirt__tunnel_local_port => '30598',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22528',
+            :libvirt__tunnel_port => '31598',
             :libvirt__iface_name => 'swp43',
             auto_config: false
       # link for swp44 --> chassis01-lc1-2:eth0
@@ -588,9 +619,9 @@ end
             :mac => "44:38:39:00:04:9f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21529',
+            :libvirt__tunnel_local_port => '30599',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22529',
+            :libvirt__tunnel_port => '31599',
             :libvirt__iface_name => 'swp44',
             auto_config: false
       # link for swp45 --> chassis03-fc3-1:eth0
@@ -598,9 +629,9 @@ end
             :mac => "44:38:39:00:04:a1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21530',
+            :libvirt__tunnel_local_port => '30600',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22530',
+            :libvirt__tunnel_port => '31600',
             :libvirt__iface_name => 'swp45',
             auto_config: false
       # link for swp46 --> chassis01-lc1-1:eth0
@@ -608,9 +639,9 @@ end
             :mac => "44:38:39:00:04:a3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21531',
+            :libvirt__tunnel_local_port => '30601',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22531',
+            :libvirt__tunnel_port => '31601',
             :libvirt__iface_name => 'swp46',
             auto_config: false
       # link for swp47 --> chassis04-lc1-2:eth0
@@ -618,9 +649,9 @@ end
             :mac => "44:38:39:00:04:a5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21532',
+            :libvirt__tunnel_local_port => '30602',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22532',
+            :libvirt__tunnel_port => '31602',
             :libvirt__iface_name => 'swp47',
             auto_config: false
       # link for swp48 --> chassis04-lc1-1:eth0
@@ -628,9 +659,9 @@ end
             :mac => "44:38:39:00:04:a7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21533',
+            :libvirt__tunnel_local_port => '30603',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22533',
+            :libvirt__tunnel_port => '31603',
             :libvirt__iface_name => 'swp48',
             auto_config: false
       # link for swp49 --> chassis03-fc1-1:eth0
@@ -638,9 +669,9 @@ end
             :mac => "44:38:39:00:04:a9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21534',
+            :libvirt__tunnel_local_port => '30604',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22534',
+            :libvirt__tunnel_port => '31604',
             :libvirt__iface_name => 'swp49',
             auto_config: false
       # link for swp50 --> chassis03-lc2-2:eth0
@@ -648,9 +679,9 @@ end
             :mac => "44:38:39:00:04:ab",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21535',
+            :libvirt__tunnel_local_port => '30605',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22535',
+            :libvirt__tunnel_port => '31605',
             :libvirt__iface_name => 'swp50',
             auto_config: false
       # link for swp51 --> chassis01-lc4-2:eth0
@@ -658,9 +689,9 @@ end
             :mac => "44:38:39:00:04:ad",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21536',
+            :libvirt__tunnel_local_port => '30606',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22536',
+            :libvirt__tunnel_port => '31606',
             :libvirt__iface_name => 'swp51',
             auto_config: false
       # link for swp52 --> chassis01-lc4-1:eth0
@@ -668,100 +699,110 @@ end
             :mac => "44:38:39:00:04:af",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21537',
+            :libvirt__tunnel_local_port => '30607',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22537',
+            :libvirt__tunnel_port => '31607',
             :libvirt__iface_name => 'swp52',
             auto_config: false
-      # link for swp53 --> chassis01-lc2-1:eth0
+      # link for swp53 --> netq-ts:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:b1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21538',
+            :libvirt__tunnel_local_port => '30608',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22538',
+            :libvirt__tunnel_port => '31608',
             :libvirt__iface_name => 'swp53',
             auto_config: false
-      # link for swp54 --> chassis03-lc4-1:eth0
+      # link for swp54 --> chassis01-lc2-1:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:b3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21539',
+            :libvirt__tunnel_local_port => '30609',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22539',
+            :libvirt__tunnel_port => '31609',
             :libvirt__iface_name => 'swp54',
             auto_config: false
-      # link for swp55 --> chassis01-lc2-2:eth0
+      # link for swp55 --> chassis03-lc4-1:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:b5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21540',
+            :libvirt__tunnel_local_port => '30610',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22540',
+            :libvirt__tunnel_port => '31610',
             :libvirt__iface_name => 'swp55',
             auto_config: false
-      # link for swp56 --> chassis01-lc3-1:eth0
+      # link for swp56 --> chassis01-lc2-2:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:b7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21541',
+            :libvirt__tunnel_local_port => '30611',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22541',
+            :libvirt__tunnel_port => '31611',
             :libvirt__iface_name => 'swp56',
             auto_config: false
-      # link for swp57 --> chassis01-lc3-2:eth0
+      # link for swp57 --> chassis01-lc3-1:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:b9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21542',
+            :libvirt__tunnel_local_port => '30612',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22542',
+            :libvirt__tunnel_port => '31612',
             :libvirt__iface_name => 'swp57',
             auto_config: false
-      # link for swp58 --> chassis02-fc4-1:eth0
+      # link for swp58 --> chassis01-lc3-2:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:bb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21543',
+            :libvirt__tunnel_local_port => '30613',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22543',
+            :libvirt__tunnel_port => '31613',
             :libvirt__iface_name => 'swp58',
             auto_config: false
-      # link for swp59 --> chassis04-lc4-1:eth0
+      # link for swp59 --> chassis02-fc4-1:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:bd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21544',
+            :libvirt__tunnel_local_port => '30614',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22544',
+            :libvirt__tunnel_port => '31614',
             :libvirt__iface_name => 'swp59',
             auto_config: false
-      # link for swp60 --> chassis04-lc4-2:eth0
+      # link for swp60 --> chassis04-lc4-1:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:bf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21545',
+            :libvirt__tunnel_local_port => '30615',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22545',
+            :libvirt__tunnel_port => '31615',
             :libvirt__iface_name => 'swp60',
             auto_config: false
-      # link for swp61 --> chassis03-lc4-2:eth0
+      # link for swp61 --> chassis04-lc4-2:eth0
       device.vm.network "private_network",
             :mac => "44:38:39:00:04:c1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21546',
+            :libvirt__tunnel_local_port => '30616',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22546',
+            :libvirt__tunnel_port => '31616',
             :libvirt__iface_name => 'swp61',
+            auto_config: false
+      # link for swp62 --> chassis03-lc4-2:eth0
+      device.vm.network "private_network",
+            :mac => "44:38:39:00:04:c3",
+            :libvirt__tunnel_type => 'udp',
+            :libvirt__tunnel_local_ip => '127.0.0.1',
+            :libvirt__tunnel_local_port => '30617',
+            :libvirt__tunnel_ip => '127.0.0.1',
+            :libvirt__tunnel_port => '31617',
+            :libvirt__iface_name => 'swp62',
             auto_config: false
 
 
@@ -1033,7 +1074,11 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:c1 --> swp61"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:c1", NAME="swp61", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     device.vm.provision :shell , :inline => <<-udev_rule
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:c3 --> swp62"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:c3", NAME="swp62", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+udev_rule
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -1049,9 +1094,9 @@ end
 
   ##### DEFINE VM for chassis02-lc1-1 #####
   config.vm.define "chassis02-lc1-1" do |device|
-
-    device.vm.hostname = "chassis02-lc1-1"
-
+    
+    device.vm.hostname = "chassis02-lc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -1069,9 +1114,9 @@ end
             :mac => "44:38:39:00:04:4c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22487',
+            :libvirt__tunnel_local_port => '31557',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21487',
+            :libvirt__tunnel_port => '30557',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-fc1-1:fp0
@@ -1079,9 +1124,9 @@ end
             :mac => "44:38:39:00:02:51",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21229',
+            :libvirt__tunnel_local_port => '30299',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22229',
+            :libvirt__tunnel_port => '31299',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-fc1-1:fp1
@@ -1089,9 +1134,9 @@ end
             :mac => "44:38:39:00:01:8e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21131',
+            :libvirt__tunnel_local_port => '30201',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22131',
+            :libvirt__tunnel_port => '31201',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-fc1-1:fp2
@@ -1099,9 +1144,9 @@ end
             :mac => "44:38:39:00:03:23",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21335',
+            :libvirt__tunnel_local_port => '30405',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22335',
+            :libvirt__tunnel_port => '31405',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-fc1-1:fp3
@@ -1109,9 +1154,9 @@ end
             :mac => "44:38:39:00:00:e6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21047',
+            :libvirt__tunnel_local_port => '30117',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22047',
+            :libvirt__tunnel_port => '31117',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-fc2-1:fp0
@@ -1119,9 +1164,9 @@ end
             :mac => "44:38:39:00:01:94",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21134',
+            :libvirt__tunnel_local_port => '30204',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22134',
+            :libvirt__tunnel_port => '31204',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-fc2-1:fp1
@@ -1129,9 +1174,9 @@ end
             :mac => "44:38:39:00:00:d6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21039',
+            :libvirt__tunnel_local_port => '30109',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22039',
+            :libvirt__tunnel_port => '31109',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-fc2-1:fp2
@@ -1139,9 +1184,9 @@ end
             :mac => "44:38:39:00:01:b6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21151',
+            :libvirt__tunnel_local_port => '30221',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22151',
+            :libvirt__tunnel_port => '31221',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-fc2-1:fp3
@@ -1149,9 +1194,9 @@ end
             :mac => "44:38:39:00:03:8f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21390',
+            :libvirt__tunnel_local_port => '30460',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22390',
+            :libvirt__tunnel_port => '31460',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-fc3-1:fp0
@@ -1159,9 +1204,9 @@ end
             :mac => "44:38:39:00:01:3c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21090',
+            :libvirt__tunnel_local_port => '30160',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22090',
+            :libvirt__tunnel_port => '31160',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-fc3-1:fp1
@@ -1169,9 +1214,9 @@ end
             :mac => "44:38:39:00:03:11",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21326',
+            :libvirt__tunnel_local_port => '30396',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22326',
+            :libvirt__tunnel_port => '31396',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-fc3-1:fp2
@@ -1179,9 +1224,9 @@ end
             :mac => "44:38:39:00:00:93",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21005',
+            :libvirt__tunnel_local_port => '30075',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22005',
+            :libvirt__tunnel_port => '31075',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-fc3-1:fp3
@@ -1189,9 +1234,9 @@ end
             :mac => "44:38:39:00:02:9d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21268',
+            :libvirt__tunnel_local_port => '30338',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22268',
+            :libvirt__tunnel_port => '31338',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-fc4-1:fp0
@@ -1199,9 +1244,9 @@ end
             :mac => "44:38:39:00:03:1f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21333',
+            :libvirt__tunnel_local_port => '30403',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22333',
+            :libvirt__tunnel_port => '31403',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-fc4-1:fp1
@@ -1209,9 +1254,9 @@ end
             :mac => "44:38:39:00:03:2b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21339',
+            :libvirt__tunnel_local_port => '30409',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22339',
+            :libvirt__tunnel_port => '31409',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-fc4-1:fp2
@@ -1219,9 +1264,9 @@ end
             :mac => "44:38:39:00:03:44",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21352',
+            :libvirt__tunnel_local_port => '30422',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22352',
+            :libvirt__tunnel_port => '31422',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-fc4-1:fp3
@@ -1229,9 +1274,9 @@ end
             :mac => "44:38:39:00:03:dc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21429',
+            :libvirt__tunnel_local_port => '30499',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22429',
+            :libvirt__tunnel_port => '31499',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp1 --> leaf01:swp52
@@ -1239,9 +1284,9 @@ end
             :mac => "44:38:39:00:01:d7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22167',
+            :libvirt__tunnel_local_port => '31237',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21167',
+            :libvirt__tunnel_port => '30237',
             :libvirt__iface_name => 'swp1',
             auto_config: false
 
@@ -1340,7 +1385,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:d7 --> swp1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:d7", NAME="swp1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -1356,9 +1401,9 @@ end
 
   ##### DEFINE VM for chassis03-lc1-1 #####
   config.vm.define "chassis03-lc1-1" do |device|
-
-    device.vm.hostname = "chassis03-lc1-1"
-
+    
+    device.vm.hostname = "chassis03-lc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -1376,9 +1421,9 @@ end
             :mac => "44:38:39:00:04:4e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22488',
+            :libvirt__tunnel_local_port => '31558',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21488',
+            :libvirt__tunnel_port => '30558',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-fc1-1:fp0
@@ -1386,9 +1431,9 @@ end
             :mac => "44:38:39:00:03:6f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21374',
+            :libvirt__tunnel_local_port => '30444',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22374',
+            :libvirt__tunnel_port => '31444',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-fc1-1:fp1
@@ -1396,9 +1441,9 @@ end
             :mac => "44:38:39:00:01:7c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21122',
+            :libvirt__tunnel_local_port => '30192',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22122',
+            :libvirt__tunnel_port => '31192',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-fc1-1:fp2
@@ -1406,9 +1451,9 @@ end
             :mac => "44:38:39:00:03:b9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21411',
+            :libvirt__tunnel_local_port => '30481',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22411',
+            :libvirt__tunnel_port => '31481',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-fc1-1:fp3
@@ -1416,9 +1461,9 @@ end
             :mac => "44:38:39:00:04:1c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21462',
+            :libvirt__tunnel_local_port => '30532',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22462',
+            :libvirt__tunnel_port => '31532',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-fc2-1:fp0
@@ -1426,9 +1471,9 @@ end
             :mac => "44:38:39:00:04:47",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21484',
+            :libvirt__tunnel_local_port => '30554',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22484',
+            :libvirt__tunnel_port => '31554',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-fc2-1:fp1
@@ -1436,9 +1481,9 @@ end
             :mac => "44:38:39:00:02:5a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21234',
+            :libvirt__tunnel_local_port => '30304',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22234',
+            :libvirt__tunnel_port => '31304',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-fc2-1:fp2
@@ -1446,9 +1491,9 @@ end
             :mac => "44:38:39:00:00:ce",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21035',
+            :libvirt__tunnel_local_port => '30105',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22035',
+            :libvirt__tunnel_port => '31105',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-fc2-1:fp3
@@ -1456,9 +1501,9 @@ end
             :mac => "44:38:39:00:00:6d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20986',
+            :libvirt__tunnel_local_port => '30056',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21986',
+            :libvirt__tunnel_port => '31056',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-fc3-1:fp0
@@ -1466,9 +1511,9 @@ end
             :mac => "44:38:39:00:00:f4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21054',
+            :libvirt__tunnel_local_port => '30124',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22054',
+            :libvirt__tunnel_port => '31124',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-fc3-1:fp1
@@ -1476,9 +1521,9 @@ end
             :mac => "44:38:39:00:01:ca",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21161',
+            :libvirt__tunnel_local_port => '30231',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22161',
+            :libvirt__tunnel_port => '31231',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-fc3-1:fp2
@@ -1486,9 +1531,9 @@ end
             :mac => "44:38:39:00:02:8f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21261',
+            :libvirt__tunnel_local_port => '30331',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22261',
+            :libvirt__tunnel_port => '31331',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-fc3-1:fp3
@@ -1496,9 +1541,9 @@ end
             :mac => "44:38:39:00:04:2a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21469',
+            :libvirt__tunnel_local_port => '30539',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22469',
+            :libvirt__tunnel_port => '31539',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-fc4-1:fp0
@@ -1506,9 +1551,9 @@ end
             :mac => "44:38:39:00:00:65",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20982',
+            :libvirt__tunnel_local_port => '30052',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21982',
+            :libvirt__tunnel_port => '31052',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-fc4-1:fp1
@@ -1516,9 +1561,9 @@ end
             :mac => "44:38:39:00:00:a3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21013',
+            :libvirt__tunnel_local_port => '30083',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22013',
+            :libvirt__tunnel_port => '31083',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-fc4-1:fp2
@@ -1526,9 +1571,9 @@ end
             :mac => "44:38:39:00:01:04",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21062',
+            :libvirt__tunnel_local_port => '30132',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22062',
+            :libvirt__tunnel_port => '31132',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-fc4-1:fp3
@@ -1536,9 +1581,9 @@ end
             :mac => "44:38:39:00:02:66",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21240',
+            :libvirt__tunnel_local_port => '30310',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22240',
+            :libvirt__tunnel_port => '31310',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp1 --> leaf01:swp53
@@ -1546,9 +1591,9 @@ end
             :mac => "44:38:39:00:03:fc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22445',
+            :libvirt__tunnel_local_port => '31515',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21445',
+            :libvirt__tunnel_port => '30515',
             :libvirt__iface_name => 'swp1',
             auto_config: false
 
@@ -1647,7 +1692,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:fc --> swp1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:fc", NAME="swp1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -1663,9 +1708,9 @@ end
 
   ##### DEFINE VM for chassis02-fc1-1 #####
   config.vm.define "chassis02-fc1-1" do |device|
-
-    device.vm.hostname = "chassis02-fc1-1"
-
+    
+    device.vm.hostname = "chassis02-fc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -1683,9 +1728,9 @@ end
             :mac => "44:38:39:00:04:50",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22489',
+            :libvirt__tunnel_local_port => '31559',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21489',
+            :libvirt__tunnel_port => '30559',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-lc1-1:fp0
@@ -1693,9 +1738,9 @@ end
             :mac => "44:38:39:00:02:52",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22229',
+            :libvirt__tunnel_local_port => '31299',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21229',
+            :libvirt__tunnel_port => '30299',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-lc1-1:fp1
@@ -1703,9 +1748,9 @@ end
             :mac => "44:38:39:00:01:8f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22131',
+            :libvirt__tunnel_local_port => '31201',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21131',
+            :libvirt__tunnel_port => '30201',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-lc1-1:fp2
@@ -1713,9 +1758,9 @@ end
             :mac => "44:38:39:00:03:24",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22335',
+            :libvirt__tunnel_local_port => '31405',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21335',
+            :libvirt__tunnel_port => '30405',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-lc1-1:fp3
@@ -1723,9 +1768,9 @@ end
             :mac => "44:38:39:00:00:e7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22047',
+            :libvirt__tunnel_local_port => '31117',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21047',
+            :libvirt__tunnel_port => '30117',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-lc1-2:fp0
@@ -1733,9 +1778,9 @@ end
             :mac => "44:38:39:00:03:82",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22383',
+            :libvirt__tunnel_local_port => '31453',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21383',
+            :libvirt__tunnel_port => '30453',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-lc1-2:fp1
@@ -1743,9 +1788,9 @@ end
             :mac => "44:38:39:00:01:0f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22067',
+            :libvirt__tunnel_local_port => '31137',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21067',
+            :libvirt__tunnel_port => '30137',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-lc1-2:fp2
@@ -1753,9 +1798,9 @@ end
             :mac => "44:38:39:00:03:f6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22442',
+            :libvirt__tunnel_local_port => '31512',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21442',
+            :libvirt__tunnel_port => '30512',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-lc1-2:fp3
@@ -1763,9 +1808,9 @@ end
             :mac => "44:38:39:00:02:8c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22259',
+            :libvirt__tunnel_local_port => '31329',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21259',
+            :libvirt__tunnel_port => '30329',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-lc2-1:fp0
@@ -1773,9 +1818,9 @@ end
             :mac => "44:38:39:00:01:b1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22148',
+            :libvirt__tunnel_local_port => '31218',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21148',
+            :libvirt__tunnel_port => '30218',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-lc2-1:fp1
@@ -1783,9 +1828,9 @@ end
             :mac => "44:38:39:00:03:6e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22373',
+            :libvirt__tunnel_local_port => '31443',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21373',
+            :libvirt__tunnel_port => '30443',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-lc2-1:fp2
@@ -1793,9 +1838,9 @@ end
             :mac => "44:38:39:00:00:eb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22049',
+            :libvirt__tunnel_local_port => '31119',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21049',
+            :libvirt__tunnel_port => '30119',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-lc2-1:fp3
@@ -1803,9 +1848,9 @@ end
             :mac => "44:38:39:00:01:f3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22181',
+            :libvirt__tunnel_local_port => '31251',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21181',
+            :libvirt__tunnel_port => '30251',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-lc2-2:fp0
@@ -1813,9 +1858,9 @@ end
             :mac => "44:38:39:00:02:25",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22206',
+            :libvirt__tunnel_local_port => '31276',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21206',
+            :libvirt__tunnel_port => '30276',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-lc2-2:fp1
@@ -1823,9 +1868,9 @@ end
             :mac => "44:38:39:00:00:98",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22007',
+            :libvirt__tunnel_local_port => '31077',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21007',
+            :libvirt__tunnel_port => '30077',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-lc2-2:fp2
@@ -1833,9 +1878,9 @@ end
             :mac => "44:38:39:00:01:79",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22120',
+            :libvirt__tunnel_local_port => '31190',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21120',
+            :libvirt__tunnel_port => '30190',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-lc2-2:fp3
@@ -1843,9 +1888,9 @@ end
             :mac => "44:38:39:00:01:d1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22164',
+            :libvirt__tunnel_local_port => '31234',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21164',
+            :libvirt__tunnel_port => '30234',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis02-lc3-1:fp0
@@ -1853,9 +1898,9 @@ end
             :mac => "44:38:39:00:03:c8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22418',
+            :libvirt__tunnel_local_port => '31488',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21418',
+            :libvirt__tunnel_port => '30488',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis02-lc3-1:fp1
@@ -1863,9 +1908,9 @@ end
             :mac => "44:38:39:00:03:1a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22330',
+            :libvirt__tunnel_local_port => '31400',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21330',
+            :libvirt__tunnel_port => '30400',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis02-lc3-1:fp2
@@ -1873,9 +1918,9 @@ end
             :mac => "44:38:39:00:03:78",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22378',
+            :libvirt__tunnel_local_port => '31448',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21378',
+            :libvirt__tunnel_port => '30448',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis02-lc3-1:fp3
@@ -1883,9 +1928,9 @@ end
             :mac => "44:38:39:00:00:82",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21996',
+            :libvirt__tunnel_local_port => '31066',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20996',
+            :libvirt__tunnel_port => '30066',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis02-lc3-2:fp0
@@ -1893,9 +1938,9 @@ end
             :mac => "44:38:39:00:00:c3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22029',
+            :libvirt__tunnel_local_port => '31099',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21029',
+            :libvirt__tunnel_port => '30099',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis02-lc3-2:fp1
@@ -1903,9 +1948,9 @@ end
             :mac => "44:38:39:00:02:2e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22211',
+            :libvirt__tunnel_local_port => '31281',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21211',
+            :libvirt__tunnel_port => '30281',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis02-lc3-2:fp2
@@ -1913,9 +1958,9 @@ end
             :mac => "44:38:39:00:02:56",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22231',
+            :libvirt__tunnel_local_port => '31301',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21231',
+            :libvirt__tunnel_port => '30301',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis02-lc3-2:fp3
@@ -1923,9 +1968,9 @@ end
             :mac => "44:38:39:00:00:f9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22056',
+            :libvirt__tunnel_local_port => '31126',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21056',
+            :libvirt__tunnel_port => '30126',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis02-lc4-1:fp0
@@ -1933,9 +1978,9 @@ end
             :mac => "44:38:39:00:00:7c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21993',
+            :libvirt__tunnel_local_port => '31063',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20993',
+            :libvirt__tunnel_port => '30063',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis02-lc4-1:fp1
@@ -1943,9 +1988,9 @@ end
             :mac => "44:38:39:00:00:54",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21973',
+            :libvirt__tunnel_local_port => '31043',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20973',
+            :libvirt__tunnel_port => '30043',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis02-lc4-1:fp2
@@ -1953,9 +1998,9 @@ end
             :mac => "44:38:39:00:02:2a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22209',
+            :libvirt__tunnel_local_port => '31279',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21209',
+            :libvirt__tunnel_port => '30279',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis02-lc4-1:fp3
@@ -1963,9 +2008,9 @@ end
             :mac => "44:38:39:00:02:9a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22266',
+            :libvirt__tunnel_local_port => '31336',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21266',
+            :libvirt__tunnel_port => '30336',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis02-lc4-2:fp0
@@ -1973,9 +2018,9 @@ end
             :mac => "44:38:39:00:02:07",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22191',
+            :libvirt__tunnel_local_port => '31261',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21191',
+            :libvirt__tunnel_port => '30261',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis02-lc4-2:fp1
@@ -1983,9 +2028,9 @@ end
             :mac => "44:38:39:00:00:dd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22042',
+            :libvirt__tunnel_local_port => '31112',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21042',
+            :libvirt__tunnel_port => '30112',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis02-lc4-2:fp2
@@ -1993,9 +2038,9 @@ end
             :mac => "44:38:39:00:00:ef",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22051',
+            :libvirt__tunnel_local_port => '31121',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21051',
+            :libvirt__tunnel_port => '30121',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis02-lc4-2:fp3
@@ -2003,9 +2048,9 @@ end
             :mac => "44:38:39:00:01:1f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22075',
+            :libvirt__tunnel_local_port => '31145',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21075',
+            :libvirt__tunnel_port => '30145',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -2164,7 +2209,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:1f --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:1f", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -2180,9 +2225,9 @@ end
 
   ##### DEFINE VM for chassis02-lc1-2 #####
   config.vm.define "chassis02-lc1-2" do |device|
-
-    device.vm.hostname = "chassis02-lc1-2"
-
+    
+    device.vm.hostname = "chassis02-lc1-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -2200,9 +2245,9 @@ end
             :mac => "44:38:39:00:04:52",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22490',
+            :libvirt__tunnel_local_port => '31560',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21490',
+            :libvirt__tunnel_port => '30560',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-fc1-1:fp4
@@ -2210,9 +2255,9 @@ end
             :mac => "44:38:39:00:03:81",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21383',
+            :libvirt__tunnel_local_port => '30453',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22383',
+            :libvirt__tunnel_port => '31453',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-fc1-1:fp5
@@ -2220,9 +2265,9 @@ end
             :mac => "44:38:39:00:01:0e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21067',
+            :libvirt__tunnel_local_port => '30137',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22067',
+            :libvirt__tunnel_port => '31137',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-fc1-1:fp6
@@ -2230,9 +2275,9 @@ end
             :mac => "44:38:39:00:03:f5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21442',
+            :libvirt__tunnel_local_port => '30512',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22442',
+            :libvirt__tunnel_port => '31512',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-fc1-1:fp7
@@ -2240,9 +2285,9 @@ end
             :mac => "44:38:39:00:02:8b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21259',
+            :libvirt__tunnel_local_port => '30329',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22259',
+            :libvirt__tunnel_port => '31329',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-fc2-1:fp4
@@ -2250,9 +2295,9 @@ end
             :mac => "44:38:39:00:04:17",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21459',
+            :libvirt__tunnel_local_port => '30529',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22459',
+            :libvirt__tunnel_port => '31529',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-fc2-1:fp5
@@ -2260,9 +2305,9 @@ end
             :mac => "44:38:39:00:02:f1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21310',
+            :libvirt__tunnel_local_port => '30380',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22310',
+            :libvirt__tunnel_port => '31380',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-fc2-1:fp6
@@ -2270,9 +2315,9 @@ end
             :mac => "44:38:39:00:00:11",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20939',
+            :libvirt__tunnel_local_port => '30009',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21939',
+            :libvirt__tunnel_port => '31009',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-fc2-1:fp7
@@ -2280,9 +2325,9 @@ end
             :mac => "44:38:39:00:00:6b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20985',
+            :libvirt__tunnel_local_port => '30055',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21985',
+            :libvirt__tunnel_port => '31055',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-fc3-1:fp4
@@ -2290,9 +2335,9 @@ end
             :mac => "44:38:39:00:00:fa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21057',
+            :libvirt__tunnel_local_port => '30127',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22057',
+            :libvirt__tunnel_port => '31127',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-fc3-1:fp5
@@ -2300,9 +2345,9 @@ end
             :mac => "44:38:39:00:01:fa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21185',
+            :libvirt__tunnel_local_port => '30255',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22185',
+            :libvirt__tunnel_port => '31255',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-fc3-1:fp6
@@ -2310,9 +2355,9 @@ end
             :mac => "44:38:39:00:01:de",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21171',
+            :libvirt__tunnel_local_port => '30241',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22171',
+            :libvirt__tunnel_port => '31241',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-fc3-1:fp7
@@ -2320,9 +2365,9 @@ end
             :mac => "44:38:39:00:02:16",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21199',
+            :libvirt__tunnel_local_port => '30269',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22199',
+            :libvirt__tunnel_port => '31269',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-fc4-1:fp4
@@ -2330,9 +2375,9 @@ end
             :mac => "44:38:39:00:02:c1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21286',
+            :libvirt__tunnel_local_port => '30356',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22286',
+            :libvirt__tunnel_port => '31356',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-fc4-1:fp5
@@ -2340,9 +2385,9 @@ end
             :mac => "44:38:39:00:02:e9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21306',
+            :libvirt__tunnel_local_port => '30376',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22306',
+            :libvirt__tunnel_port => '31376',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-fc4-1:fp6
@@ -2350,9 +2395,9 @@ end
             :mac => "44:38:39:00:03:91",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21391',
+            :libvirt__tunnel_local_port => '30461',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22391',
+            :libvirt__tunnel_port => '31461',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-fc4-1:fp7
@@ -2360,9 +2405,9 @@ end
             :mac => "44:38:39:00:03:46",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21353',
+            :libvirt__tunnel_local_port => '30423',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22353',
+            :libvirt__tunnel_port => '31423',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp2 --> leaf02:swp52
@@ -2370,9 +2415,9 @@ end
             :mac => "44:38:39:00:00:2a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21951',
+            :libvirt__tunnel_local_port => '31021',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20951',
+            :libvirt__tunnel_port => '30021',
             :libvirt__iface_name => 'swp2',
             auto_config: false
 
@@ -2471,7 +2516,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:2a --> swp2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:2a", NAME="swp2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -2487,9 +2532,9 @@ end
 
   ##### DEFINE VM for chassis02-fc3-1 #####
   config.vm.define "chassis02-fc3-1" do |device|
-
-    device.vm.hostname = "chassis02-fc3-1"
-
+    
+    device.vm.hostname = "chassis02-fc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -2507,9 +2552,9 @@ end
             :mac => "44:38:39:00:04:54",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22491',
+            :libvirt__tunnel_local_port => '31561',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21491',
+            :libvirt__tunnel_port => '30561',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-lc1-1:fp8
@@ -2517,9 +2562,9 @@ end
             :mac => "44:38:39:00:01:3d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22090',
+            :libvirt__tunnel_local_port => '31160',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21090',
+            :libvirt__tunnel_port => '30160',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-lc1-1:fp9
@@ -2527,9 +2572,9 @@ end
             :mac => "44:38:39:00:03:12",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22326',
+            :libvirt__tunnel_local_port => '31396',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21326',
+            :libvirt__tunnel_port => '30396',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-lc1-1:fp10
@@ -2537,9 +2582,9 @@ end
             :mac => "44:38:39:00:00:94",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22005',
+            :libvirt__tunnel_local_port => '31075',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21005',
+            :libvirt__tunnel_port => '30075',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-lc1-1:fp11
@@ -2547,9 +2592,9 @@ end
             :mac => "44:38:39:00:02:9e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22268',
+            :libvirt__tunnel_local_port => '31338',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21268',
+            :libvirt__tunnel_port => '30338',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-lc1-2:fp8
@@ -2557,9 +2602,9 @@ end
             :mac => "44:38:39:00:00:fb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22057',
+            :libvirt__tunnel_local_port => '31127',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21057',
+            :libvirt__tunnel_port => '30127',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-lc1-2:fp9
@@ -2567,9 +2612,9 @@ end
             :mac => "44:38:39:00:01:fb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22185',
+            :libvirt__tunnel_local_port => '31255',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21185',
+            :libvirt__tunnel_port => '30255',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-lc1-2:fp10
@@ -2577,9 +2622,9 @@ end
             :mac => "44:38:39:00:01:df",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22171',
+            :libvirt__tunnel_local_port => '31241',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21171',
+            :libvirt__tunnel_port => '30241',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-lc1-2:fp11
@@ -2587,9 +2632,9 @@ end
             :mac => "44:38:39:00:02:17",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22199',
+            :libvirt__tunnel_local_port => '31269',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21199',
+            :libvirt__tunnel_port => '30269',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-lc2-1:fp8
@@ -2597,9 +2642,9 @@ end
             :mac => "44:38:39:00:00:ab",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22017',
+            :libvirt__tunnel_local_port => '31087',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21017',
+            :libvirt__tunnel_port => '30087',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-lc2-1:fp9
@@ -2607,9 +2652,9 @@ end
             :mac => "44:38:39:00:02:da",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22298',
+            :libvirt__tunnel_local_port => '31368',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21298',
+            :libvirt__tunnel_port => '30368',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-lc2-1:fp10
@@ -2617,9 +2662,9 @@ end
             :mac => "44:38:39:00:00:9c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22009',
+            :libvirt__tunnel_local_port => '31079',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21009',
+            :libvirt__tunnel_port => '30079',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-lc2-1:fp11
@@ -2627,9 +2672,9 @@ end
             :mac => "44:38:39:00:02:b6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22280',
+            :libvirt__tunnel_local_port => '31350',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21280',
+            :libvirt__tunnel_port => '30350',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-lc2-2:fp8
@@ -2637,9 +2682,9 @@ end
             :mac => "44:38:39:00:03:5b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22363',
+            :libvirt__tunnel_local_port => '31433',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21363',
+            :libvirt__tunnel_port => '30433',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-lc2-2:fp9
@@ -2647,9 +2692,9 @@ end
             :mac => "44:38:39:00:02:40",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22220',
+            :libvirt__tunnel_local_port => '31290',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21220',
+            :libvirt__tunnel_port => '30290',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-lc2-2:fp10
@@ -2657,9 +2702,9 @@ end
             :mac => "44:38:39:00:00:37",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21958',
+            :libvirt__tunnel_local_port => '31028',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20958',
+            :libvirt__tunnel_port => '30028',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-lc2-2:fp11
@@ -2667,9 +2712,9 @@ end
             :mac => "44:38:39:00:00:c9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22032',
+            :libvirt__tunnel_local_port => '31102',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21032',
+            :libvirt__tunnel_port => '30102',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis02-lc3-1:fp8
@@ -2677,9 +2722,9 @@ end
             :mac => "44:38:39:00:00:6a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21984',
+            :libvirt__tunnel_local_port => '31054',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20984',
+            :libvirt__tunnel_port => '30054',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis02-lc3-1:fp9
@@ -2687,9 +2732,9 @@ end
             :mac => "44:38:39:00:02:3c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22218',
+            :libvirt__tunnel_local_port => '31288',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21218',
+            :libvirt__tunnel_port => '30288',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis02-lc3-1:fp10
@@ -2697,9 +2742,9 @@ end
             :mac => "44:38:39:00:02:92",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22262',
+            :libvirt__tunnel_local_port => '31332',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21262',
+            :libvirt__tunnel_port => '30332',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis02-lc3-1:fp11
@@ -2707,9 +2752,9 @@ end
             :mac => "44:38:39:00:03:f2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22440',
+            :libvirt__tunnel_local_port => '31510',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21440',
+            :libvirt__tunnel_port => '30510',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis02-lc3-2:fp8
@@ -2717,9 +2762,9 @@ end
             :mac => "44:38:39:00:01:03",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22061',
+            :libvirt__tunnel_local_port => '31131',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21061',
+            :libvirt__tunnel_port => '30131',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis02-lc3-2:fp9
@@ -2727,9 +2772,9 @@ end
             :mac => "44:38:39:00:00:fd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22058',
+            :libvirt__tunnel_local_port => '31128',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21058',
+            :libvirt__tunnel_port => '30128',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis02-lc3-2:fp10
@@ -2737,9 +2782,9 @@ end
             :mac => "44:38:39:00:00:70",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21987',
+            :libvirt__tunnel_local_port => '31057',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20987',
+            :libvirt__tunnel_port => '30057',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis02-lc3-2:fp11
@@ -2747,9 +2792,9 @@ end
             :mac => "44:38:39:00:02:0b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22193',
+            :libvirt__tunnel_local_port => '31263',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21193',
+            :libvirt__tunnel_port => '30263',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis02-lc4-1:fp8
@@ -2757,9 +2802,9 @@ end
             :mac => "44:38:39:00:03:55",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22360',
+            :libvirt__tunnel_local_port => '31430',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21360',
+            :libvirt__tunnel_port => '30430',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis02-lc4-1:fp9
@@ -2767,9 +2812,9 @@ end
             :mac => "44:38:39:00:03:e9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22435',
+            :libvirt__tunnel_local_port => '31505',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21435',
+            :libvirt__tunnel_port => '30505',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis02-lc4-1:fp10
@@ -2777,9 +2822,9 @@ end
             :mac => "44:38:39:00:03:9c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22396',
+            :libvirt__tunnel_local_port => '31466',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21396',
+            :libvirt__tunnel_port => '30466',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis02-lc4-1:fp11
@@ -2787,9 +2832,9 @@ end
             :mac => "44:38:39:00:03:b6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22409',
+            :libvirt__tunnel_local_port => '31479',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21409',
+            :libvirt__tunnel_port => '30479',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis02-lc4-2:fp8
@@ -2797,9 +2842,9 @@ end
             :mac => "44:38:39:00:02:d0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22293',
+            :libvirt__tunnel_local_port => '31363',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21293',
+            :libvirt__tunnel_port => '30363',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis02-lc4-2:fp9
@@ -2807,9 +2852,9 @@ end
             :mac => "44:38:39:00:01:93",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22133',
+            :libvirt__tunnel_local_port => '31203',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21133',
+            :libvirt__tunnel_port => '30203',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis02-lc4-2:fp10
@@ -2817,9 +2862,9 @@ end
             :mac => "44:38:39:00:03:3f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22349',
+            :libvirt__tunnel_local_port => '31419',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21349',
+            :libvirt__tunnel_port => '30419',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis02-lc4-2:fp11
@@ -2827,9 +2872,9 @@ end
             :mac => "44:38:39:00:01:37",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22087',
+            :libvirt__tunnel_local_port => '31157',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21087',
+            :libvirt__tunnel_port => '30157',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -2988,7 +3033,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:37 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:37", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -3004,9 +3049,9 @@ end
 
   ##### DEFINE VM for chassis03-lc3-1 #####
   config.vm.define "chassis03-lc3-1" do |device|
-
-    device.vm.hostname = "chassis03-lc3-1"
-
+    
+    device.vm.hostname = "chassis03-lc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -3024,9 +3069,9 @@ end
             :mac => "44:38:39:00:04:56",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22492',
+            :libvirt__tunnel_local_port => '31562',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21492',
+            :libvirt__tunnel_port => '30562',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-fc1-1:fp16
@@ -3034,9 +3079,9 @@ end
             :mac => "44:38:39:00:03:27",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21337',
+            :libvirt__tunnel_local_port => '30407',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22337',
+            :libvirt__tunnel_port => '31407',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-fc1-1:fp17
@@ -3044,9 +3089,9 @@ end
             :mac => "44:38:39:00:03:69",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21371',
+            :libvirt__tunnel_local_port => '30441',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22371',
+            :libvirt__tunnel_port => '31441',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-fc1-1:fp18
@@ -3054,9 +3099,9 @@ end
             :mac => "44:38:39:00:03:a7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21402',
+            :libvirt__tunnel_local_port => '30472',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22402',
+            :libvirt__tunnel_port => '31472',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-fc1-1:fp19
@@ -3064,9 +3109,9 @@ end
             :mac => "44:38:39:00:01:c2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21157',
+            :libvirt__tunnel_local_port => '30227',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22157',
+            :libvirt__tunnel_port => '31227',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-fc2-1:fp16
@@ -3074,9 +3119,9 @@ end
             :mac => "44:38:39:00:00:d2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21037',
+            :libvirt__tunnel_local_port => '30107',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22037',
+            :libvirt__tunnel_port => '31107',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-fc2-1:fp17
@@ -3084,9 +3129,9 @@ end
             :mac => "44:38:39:00:02:ad",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21276',
+            :libvirt__tunnel_local_port => '30346',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22276',
+            :libvirt__tunnel_port => '31346',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-fc2-1:fp18
@@ -3094,9 +3139,9 @@ end
             :mac => "44:38:39:00:01:e6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21175',
+            :libvirt__tunnel_local_port => '30245',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22175',
+            :libvirt__tunnel_port => '31245',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-fc2-1:fp19
@@ -3104,9 +3149,9 @@ end
             :mac => "44:38:39:00:01:ac",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21146',
+            :libvirt__tunnel_local_port => '30216',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22146',
+            :libvirt__tunnel_port => '31216',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-fc3-1:fp16
@@ -3114,9 +3159,9 @@ end
             :mac => "44:38:39:00:01:2e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21083',
+            :libvirt__tunnel_local_port => '30153',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22083',
+            :libvirt__tunnel_port => '31153',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-fc3-1:fp17
@@ -3124,9 +3169,9 @@ end
             :mac => "44:38:39:00:00:b0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21020',
+            :libvirt__tunnel_local_port => '30090',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22020',
+            :libvirt__tunnel_port => '31090',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-fc3-1:fp18
@@ -3134,9 +3179,9 @@ end
             :mac => "44:38:39:00:02:97",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21265',
+            :libvirt__tunnel_local_port => '30335',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22265',
+            :libvirt__tunnel_port => '31335',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-fc3-1:fp19
@@ -3144,9 +3189,9 @@ end
             :mac => "44:38:39:00:03:c1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21415',
+            :libvirt__tunnel_local_port => '30485',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22415',
+            :libvirt__tunnel_port => '31485',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-fc4-1:fp16
@@ -3154,9 +3199,9 @@ end
             :mac => "44:38:39:00:03:a1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21399',
+            :libvirt__tunnel_local_port => '30469',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22399',
+            :libvirt__tunnel_port => '31469',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-fc4-1:fp17
@@ -3164,9 +3209,9 @@ end
             :mac => "44:38:39:00:03:39",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21346',
+            :libvirt__tunnel_local_port => '30416',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22346',
+            :libvirt__tunnel_port => '31416',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-fc4-1:fp18
@@ -3174,9 +3219,9 @@ end
             :mac => "44:38:39:00:01:54",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21102',
+            :libvirt__tunnel_local_port => '30172',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22102',
+            :libvirt__tunnel_port => '31172',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-fc4-1:fp19
@@ -3184,9 +3229,9 @@ end
             :mac => "44:38:39:00:03:75",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21377',
+            :libvirt__tunnel_local_port => '30447',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22377',
+            :libvirt__tunnel_port => '31447',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp5 --> leaf05:swp53
@@ -3194,9 +3239,9 @@ end
             :mac => "44:38:39:00:01:25",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22078',
+            :libvirt__tunnel_local_port => '31148',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21078',
+            :libvirt__tunnel_port => '30148',
             :libvirt__iface_name => 'swp5',
             auto_config: false
 
@@ -3295,7 +3340,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:25 --> swp5"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:25", NAME="swp5", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -3311,9 +3356,9 @@ end
 
   ##### DEFINE VM for chassis02-lc2-2 #####
   config.vm.define "chassis02-lc2-2" do |device|
-
-    device.vm.hostname = "chassis02-lc2-2"
-
+    
+    device.vm.hostname = "chassis02-lc2-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -3331,9 +3376,9 @@ end
             :mac => "44:38:39:00:04:58",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22493',
+            :libvirt__tunnel_local_port => '31563',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21493',
+            :libvirt__tunnel_port => '30563',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-fc1-1:fp12
@@ -3341,9 +3386,9 @@ end
             :mac => "44:38:39:00:02:24",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21206',
+            :libvirt__tunnel_local_port => '30276',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22206',
+            :libvirt__tunnel_port => '31276',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-fc1-1:fp13
@@ -3351,9 +3396,9 @@ end
             :mac => "44:38:39:00:00:97",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21007',
+            :libvirt__tunnel_local_port => '30077',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22007',
+            :libvirt__tunnel_port => '31077',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-fc1-1:fp14
@@ -3361,9 +3406,9 @@ end
             :mac => "44:38:39:00:01:78",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21120',
+            :libvirt__tunnel_local_port => '30190',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22120',
+            :libvirt__tunnel_port => '31190',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-fc1-1:fp15
@@ -3371,9 +3416,9 @@ end
             :mac => "44:38:39:00:01:d0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21164',
+            :libvirt__tunnel_local_port => '30234',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22164',
+            :libvirt__tunnel_port => '31234',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-fc2-1:fp12
@@ -3381,9 +3426,9 @@ end
             :mac => "44:38:39:00:03:4a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21355',
+            :libvirt__tunnel_local_port => '30425',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22355',
+            :libvirt__tunnel_port => '31425',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-fc2-1:fp13
@@ -3391,9 +3436,9 @@ end
             :mac => "44:38:39:00:02:7d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21252',
+            :libvirt__tunnel_local_port => '30322',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22252',
+            :libvirt__tunnel_port => '31322',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-fc2-1:fp14
@@ -3401,9 +3446,9 @@ end
             :mac => "44:38:39:00:01:80",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21124',
+            :libvirt__tunnel_local_port => '30194',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22124',
+            :libvirt__tunnel_port => '31194',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-fc2-1:fp15
@@ -3411,9 +3456,9 @@ end
             :mac => "44:38:39:00:02:87",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21257',
+            :libvirt__tunnel_local_port => '30327',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22257',
+            :libvirt__tunnel_port => '31327',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-fc3-1:fp12
@@ -3421,9 +3466,9 @@ end
             :mac => "44:38:39:00:03:5a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21363',
+            :libvirt__tunnel_local_port => '30433',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22363',
+            :libvirt__tunnel_port => '31433',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-fc3-1:fp13
@@ -3431,9 +3476,9 @@ end
             :mac => "44:38:39:00:02:3f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21220',
+            :libvirt__tunnel_local_port => '30290',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22220',
+            :libvirt__tunnel_port => '31290',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-fc3-1:fp14
@@ -3441,9 +3486,9 @@ end
             :mac => "44:38:39:00:00:36",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20958',
+            :libvirt__tunnel_local_port => '30028',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21958',
+            :libvirt__tunnel_port => '31028',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-fc3-1:fp15
@@ -3451,9 +3496,9 @@ end
             :mac => "44:38:39:00:00:c8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21032',
+            :libvirt__tunnel_local_port => '30102',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22032',
+            :libvirt__tunnel_port => '31102',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-fc4-1:fp12
@@ -3461,9 +3506,9 @@ end
             :mac => "44:38:39:00:03:65",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21369',
+            :libvirt__tunnel_local_port => '30439',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22369',
+            :libvirt__tunnel_port => '31439',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-fc4-1:fp13
@@ -3471,9 +3516,9 @@ end
             :mac => "44:38:39:00:03:cb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21420',
+            :libvirt__tunnel_local_port => '30490',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22420',
+            :libvirt__tunnel_port => '31490',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-fc4-1:fp14
@@ -3481,9 +3526,9 @@ end
             :mac => "44:38:39:00:04:11",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21456',
+            :libvirt__tunnel_local_port => '30526',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22456',
+            :libvirt__tunnel_port => '31526',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-fc4-1:fp15
@@ -3491,9 +3536,9 @@ end
             :mac => "44:38:39:00:02:6a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21242',
+            :libvirt__tunnel_local_port => '30312',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22242',
+            :libvirt__tunnel_port => '31312',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp4 --> leaf04:swp52
@@ -3501,9 +3546,9 @@ end
             :mac => "44:38:39:00:03:94",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22392',
+            :libvirt__tunnel_local_port => '31462',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21392',
+            :libvirt__tunnel_port => '30462',
             :libvirt__iface_name => 'swp4',
             auto_config: false
 
@@ -3602,7 +3647,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:94 --> swp4"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:94", NAME="swp4", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -3618,9 +3663,9 @@ end
 
   ##### DEFINE VM for chassis02-fc2-1 #####
   config.vm.define "chassis02-fc2-1" do |device|
-
-    device.vm.hostname = "chassis02-fc2-1"
-
+    
+    device.vm.hostname = "chassis02-fc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -3638,9 +3683,9 @@ end
             :mac => "44:38:39:00:04:5a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22494',
+            :libvirt__tunnel_local_port => '31564',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21494',
+            :libvirt__tunnel_port => '30564',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-lc1-1:fp4
@@ -3648,9 +3693,9 @@ end
             :mac => "44:38:39:00:01:95",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22134',
+            :libvirt__tunnel_local_port => '31204',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21134',
+            :libvirt__tunnel_port => '30204',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-lc1-1:fp5
@@ -3658,9 +3703,9 @@ end
             :mac => "44:38:39:00:00:d7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22039',
+            :libvirt__tunnel_local_port => '31109',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21039',
+            :libvirt__tunnel_port => '30109',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-lc1-1:fp6
@@ -3668,9 +3713,9 @@ end
             :mac => "44:38:39:00:01:b7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22151',
+            :libvirt__tunnel_local_port => '31221',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21151',
+            :libvirt__tunnel_port => '30221',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-lc1-1:fp7
@@ -3678,9 +3723,9 @@ end
             :mac => "44:38:39:00:03:90",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22390',
+            :libvirt__tunnel_local_port => '31460',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21390',
+            :libvirt__tunnel_port => '30460',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-lc1-2:fp4
@@ -3688,9 +3733,9 @@ end
             :mac => "44:38:39:00:04:18",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22459',
+            :libvirt__tunnel_local_port => '31529',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21459',
+            :libvirt__tunnel_port => '30529',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-lc1-2:fp5
@@ -3698,9 +3743,9 @@ end
             :mac => "44:38:39:00:02:f2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22310',
+            :libvirt__tunnel_local_port => '31380',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21310',
+            :libvirt__tunnel_port => '30380',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-lc1-2:fp6
@@ -3708,9 +3753,9 @@ end
             :mac => "44:38:39:00:00:12",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21939',
+            :libvirt__tunnel_local_port => '31009',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20939',
+            :libvirt__tunnel_port => '30009',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-lc1-2:fp7
@@ -3718,9 +3763,9 @@ end
             :mac => "44:38:39:00:00:6c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21985',
+            :libvirt__tunnel_local_port => '31055',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20985',
+            :libvirt__tunnel_port => '30055',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-lc2-1:fp4
@@ -3728,9 +3773,9 @@ end
             :mac => "44:38:39:00:02:48",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22224',
+            :libvirt__tunnel_local_port => '31294',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21224',
+            :libvirt__tunnel_port => '30294',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-lc2-1:fp5
@@ -3738,9 +3783,9 @@ end
             :mac => "44:38:39:00:02:4c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22226',
+            :libvirt__tunnel_local_port => '31296',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21226',
+            :libvirt__tunnel_port => '30296',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-lc2-1:fp6
@@ -3748,9 +3793,9 @@ end
             :mac => "44:38:39:00:02:f8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22313',
+            :libvirt__tunnel_local_port => '31383',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21313',
+            :libvirt__tunnel_port => '30383',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-lc2-1:fp7
@@ -3758,9 +3803,9 @@ end
             :mac => "44:38:39:00:03:2e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22340',
+            :libvirt__tunnel_local_port => '31410',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21340',
+            :libvirt__tunnel_port => '30410',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-lc2-2:fp4
@@ -3768,9 +3813,9 @@ end
             :mac => "44:38:39:00:03:4b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22355',
+            :libvirt__tunnel_local_port => '31425',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21355',
+            :libvirt__tunnel_port => '30425',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-lc2-2:fp5
@@ -3778,9 +3823,9 @@ end
             :mac => "44:38:39:00:02:7e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22252',
+            :libvirt__tunnel_local_port => '31322',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21252',
+            :libvirt__tunnel_port => '30322',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-lc2-2:fp6
@@ -3788,9 +3833,9 @@ end
             :mac => "44:38:39:00:01:81",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22124',
+            :libvirt__tunnel_local_port => '31194',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21124',
+            :libvirt__tunnel_port => '30194',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-lc2-2:fp7
@@ -3798,9 +3843,9 @@ end
             :mac => "44:38:39:00:02:88",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22257',
+            :libvirt__tunnel_local_port => '31327',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21257',
+            :libvirt__tunnel_port => '30327',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis02-lc3-1:fp4
@@ -3808,9 +3853,9 @@ end
             :mac => "44:38:39:00:03:10",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22325',
+            :libvirt__tunnel_local_port => '31395',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21325',
+            :libvirt__tunnel_port => '30395',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis02-lc3-1:fp5
@@ -3818,9 +3863,9 @@ end
             :mac => "44:38:39:00:01:99",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22136',
+            :libvirt__tunnel_local_port => '31206',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21136',
+            :libvirt__tunnel_port => '30206',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis02-lc3-1:fp6
@@ -3828,9 +3873,9 @@ end
             :mac => "44:38:39:00:02:78",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22249',
+            :libvirt__tunnel_local_port => '31319',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21249',
+            :libvirt__tunnel_port => '30319',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis02-lc3-1:fp7
@@ -3838,9 +3883,9 @@ end
             :mac => "44:38:39:00:00:5c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21977',
+            :libvirt__tunnel_local_port => '31047',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20977',
+            :libvirt__tunnel_port => '30047',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis02-lc3-2:fp4
@@ -3848,9 +3893,9 @@ end
             :mac => "44:38:39:00:01:39",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22088',
+            :libvirt__tunnel_local_port => '31158',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21088',
+            :libvirt__tunnel_port => '30158',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis02-lc3-2:fp5
@@ -3858,9 +3903,9 @@ end
             :mac => "44:38:39:00:03:ae",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22405',
+            :libvirt__tunnel_local_port => '31475',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21405',
+            :libvirt__tunnel_port => '30475',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis02-lc3-2:fp6
@@ -3868,9 +3913,9 @@ end
             :mac => "44:38:39:00:04:3b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22477',
+            :libvirt__tunnel_local_port => '31547',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21477',
+            :libvirt__tunnel_port => '30547',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis02-lc3-2:fp7
@@ -3878,9 +3923,9 @@ end
             :mac => "44:38:39:00:00:f3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22053',
+            :libvirt__tunnel_local_port => '31123',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21053',
+            :libvirt__tunnel_port => '30123',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis02-lc4-1:fp4
@@ -3888,9 +3933,9 @@ end
             :mac => "44:38:39:00:02:cc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22291',
+            :libvirt__tunnel_local_port => '31361',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21291',
+            :libvirt__tunnel_port => '30361',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis02-lc4-1:fp5
@@ -3898,9 +3943,9 @@ end
             :mac => "44:38:39:00:01:ed",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22178',
+            :libvirt__tunnel_local_port => '31248',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21178',
+            :libvirt__tunnel_port => '30248',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis02-lc4-1:fp6
@@ -3908,9 +3953,9 @@ end
             :mac => "44:38:39:00:02:84",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22255',
+            :libvirt__tunnel_local_port => '31325',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21255',
+            :libvirt__tunnel_port => '30325',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis02-lc4-1:fp7
@@ -3918,9 +3963,9 @@ end
             :mac => "44:38:39:00:00:b3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22021',
+            :libvirt__tunnel_local_port => '31091',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21021',
+            :libvirt__tunnel_port => '30091',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis02-lc4-2:fp4
@@ -3928,9 +3973,9 @@ end
             :mac => "44:38:39:00:00:ad",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22018',
+            :libvirt__tunnel_local_port => '31088',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21018',
+            :libvirt__tunnel_port => '30088',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis02-lc4-2:fp5
@@ -3938,9 +3983,9 @@ end
             :mac => "44:38:39:00:03:86",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22385',
+            :libvirt__tunnel_local_port => '31455',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21385',
+            :libvirt__tunnel_port => '30455',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis02-lc4-2:fp6
@@ -3948,9 +3993,9 @@ end
             :mac => "44:38:39:00:00:a8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22015',
+            :libvirt__tunnel_local_port => '31085',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21015',
+            :libvirt__tunnel_port => '30085',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis02-lc4-2:fp7
@@ -3958,9 +4003,9 @@ end
             :mac => "44:38:39:00:01:5b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22105',
+            :libvirt__tunnel_local_port => '31175',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21105',
+            :libvirt__tunnel_port => '30175',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -4119,7 +4164,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:5b --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:5b", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -4135,9 +4180,9 @@ end
 
   ##### DEFINE VM for chassis02-lc2-1 #####
   config.vm.define "chassis02-lc2-1" do |device|
-
-    device.vm.hostname = "chassis02-lc2-1"
-
+    
+    device.vm.hostname = "chassis02-lc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -4155,9 +4200,9 @@ end
             :mac => "44:38:39:00:04:5c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22495',
+            :libvirt__tunnel_local_port => '31565',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21495',
+            :libvirt__tunnel_port => '30565',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-fc1-1:fp8
@@ -4165,9 +4210,9 @@ end
             :mac => "44:38:39:00:01:b0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21148',
+            :libvirt__tunnel_local_port => '30218',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22148',
+            :libvirt__tunnel_port => '31218',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-fc1-1:fp9
@@ -4175,9 +4220,9 @@ end
             :mac => "44:38:39:00:03:6d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21373',
+            :libvirt__tunnel_local_port => '30443',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22373',
+            :libvirt__tunnel_port => '31443',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-fc1-1:fp10
@@ -4185,9 +4230,9 @@ end
             :mac => "44:38:39:00:00:ea",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21049',
+            :libvirt__tunnel_local_port => '30119',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22049',
+            :libvirt__tunnel_port => '31119',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-fc1-1:fp11
@@ -4195,9 +4240,9 @@ end
             :mac => "44:38:39:00:01:f2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21181',
+            :libvirt__tunnel_local_port => '30251',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22181',
+            :libvirt__tunnel_port => '31251',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-fc2-1:fp8
@@ -4205,9 +4250,9 @@ end
             :mac => "44:38:39:00:02:47",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21224',
+            :libvirt__tunnel_local_port => '30294',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22224',
+            :libvirt__tunnel_port => '31294',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-fc2-1:fp9
@@ -4215,9 +4260,9 @@ end
             :mac => "44:38:39:00:02:4b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21226',
+            :libvirt__tunnel_local_port => '30296',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22226',
+            :libvirt__tunnel_port => '31296',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-fc2-1:fp10
@@ -4225,9 +4270,9 @@ end
             :mac => "44:38:39:00:02:f7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21313',
+            :libvirt__tunnel_local_port => '30383',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22313',
+            :libvirt__tunnel_port => '31383',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-fc2-1:fp11
@@ -4235,9 +4280,9 @@ end
             :mac => "44:38:39:00:03:2d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21340',
+            :libvirt__tunnel_local_port => '30410',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22340',
+            :libvirt__tunnel_port => '31410',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-fc3-1:fp8
@@ -4245,9 +4290,9 @@ end
             :mac => "44:38:39:00:00:aa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21017',
+            :libvirt__tunnel_local_port => '30087',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22017',
+            :libvirt__tunnel_port => '31087',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-fc3-1:fp9
@@ -4255,9 +4300,9 @@ end
             :mac => "44:38:39:00:02:d9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21298',
+            :libvirt__tunnel_local_port => '30368',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22298',
+            :libvirt__tunnel_port => '31368',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-fc3-1:fp10
@@ -4265,9 +4310,9 @@ end
             :mac => "44:38:39:00:00:9b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21009',
+            :libvirt__tunnel_local_port => '30079',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22009',
+            :libvirt__tunnel_port => '31079',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-fc3-1:fp11
@@ -4275,9 +4320,9 @@ end
             :mac => "44:38:39:00:02:b5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21280',
+            :libvirt__tunnel_local_port => '30350',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22280',
+            :libvirt__tunnel_port => '31350',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-fc4-1:fp8
@@ -4285,9 +4330,9 @@ end
             :mac => "44:38:39:00:00:25",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20949',
+            :libvirt__tunnel_local_port => '30019',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21949',
+            :libvirt__tunnel_port => '31019',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-fc4-1:fp9
@@ -4295,9 +4340,9 @@ end
             :mac => "44:38:39:00:02:b1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21278',
+            :libvirt__tunnel_local_port => '30348',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22278',
+            :libvirt__tunnel_port => '31348',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-fc4-1:fp10
@@ -4305,9 +4350,9 @@ end
             :mac => "44:38:39:00:02:37",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21216',
+            :libvirt__tunnel_local_port => '30286',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22216',
+            :libvirt__tunnel_port => '31286',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-fc4-1:fp11
@@ -4315,9 +4360,9 @@ end
             :mac => "44:38:39:00:01:f0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21180',
+            :libvirt__tunnel_local_port => '30250',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22180',
+            :libvirt__tunnel_port => '31250',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp3 --> leaf03:swp52
@@ -4325,9 +4370,9 @@ end
             :mac => "44:38:39:00:00:18",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21942',
+            :libvirt__tunnel_local_port => '31012',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20942',
+            :libvirt__tunnel_port => '30012',
             :libvirt__iface_name => 'swp3',
             auto_config: false
 
@@ -4426,7 +4471,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:18 --> swp3"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:18", NAME="swp3", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -4442,9 +4487,9 @@ end
 
   ##### DEFINE VM for chassis04-lc3-1 #####
   config.vm.define "chassis04-lc3-1" do |device|
-
-    device.vm.hostname = "chassis04-lc3-1"
-
+    
+    device.vm.hostname = "chassis04-lc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -4462,9 +4507,9 @@ end
             :mac => "44:38:39:00:04:5e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22496',
+            :libvirt__tunnel_local_port => '31566',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21496',
+            :libvirt__tunnel_port => '30566',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-fc1-1:fp16
@@ -4472,9 +4517,9 @@ end
             :mac => "44:38:39:00:02:0e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21195',
+            :libvirt__tunnel_local_port => '30265',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22195',
+            :libvirt__tunnel_port => '31265',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-fc1-1:fp17
@@ -4482,9 +4527,9 @@ end
             :mac => "44:38:39:00:00:5d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20978',
+            :libvirt__tunnel_local_port => '30048',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21978',
+            :libvirt__tunnel_port => '31048',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-fc1-1:fp18
@@ -4492,9 +4537,9 @@ end
             :mac => "44:38:39:00:02:04",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21190',
+            :libvirt__tunnel_local_port => '30260',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22190',
+            :libvirt__tunnel_port => '31260',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-fc1-1:fp19
@@ -4502,9 +4547,9 @@ end
             :mac => "44:38:39:00:02:5c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21235',
+            :libvirt__tunnel_local_port => '30305',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22235',
+            :libvirt__tunnel_port => '31305',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-fc2-1:fp16
@@ -4512,9 +4557,9 @@ end
             :mac => "44:38:39:00:01:3e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21091',
+            :libvirt__tunnel_local_port => '30161',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22091',
+            :libvirt__tunnel_port => '31161',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-fc2-1:fp17
@@ -4522,9 +4567,9 @@ end
             :mac => "44:38:39:00:03:5f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21366',
+            :libvirt__tunnel_local_port => '30436',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22366',
+            :libvirt__tunnel_port => '31436',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-fc2-1:fp18
@@ -4532,9 +4577,9 @@ end
             :mac => "44:38:39:00:01:b8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21152',
+            :libvirt__tunnel_local_port => '30222',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22152',
+            :libvirt__tunnel_port => '31222',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-fc2-1:fp19
@@ -4542,9 +4587,9 @@ end
             :mac => "44:38:39:00:00:8d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21002',
+            :libvirt__tunnel_local_port => '30072',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22002',
+            :libvirt__tunnel_port => '31072',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-fc3-1:fp16
@@ -4552,9 +4597,9 @@ end
             :mac => "44:38:39:00:03:8d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21389',
+            :libvirt__tunnel_local_port => '30459',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22389',
+            :libvirt__tunnel_port => '31459',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-fc3-1:fp17
@@ -4562,9 +4607,9 @@ end
             :mac => "44:38:39:00:01:dc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21170',
+            :libvirt__tunnel_local_port => '30240',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22170',
+            :libvirt__tunnel_port => '31240',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-fc3-1:fp18
@@ -4572,9 +4617,9 @@ end
             :mac => "44:38:39:00:03:cf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21422',
+            :libvirt__tunnel_local_port => '30492',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22422',
+            :libvirt__tunnel_port => '31492',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-fc3-1:fp19
@@ -4582,9 +4627,9 @@ end
             :mac => "44:38:39:00:00:46",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20966',
+            :libvirt__tunnel_local_port => '30036',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21966',
+            :libvirt__tunnel_port => '31036',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-fc4-1:fp16
@@ -4592,9 +4637,9 @@ end
             :mac => "44:38:39:00:00:5f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20979',
+            :libvirt__tunnel_local_port => '30049',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21979',
+            :libvirt__tunnel_port => '31049',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-fc4-1:fp17
@@ -4602,9 +4647,9 @@ end
             :mac => "44:38:39:00:00:ba",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21025',
+            :libvirt__tunnel_local_port => '30095',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22025',
+            :libvirt__tunnel_port => '31095',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-fc4-1:fp18
@@ -4612,9 +4657,9 @@ end
             :mac => "44:38:39:00:01:a6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21143',
+            :libvirt__tunnel_local_port => '30213',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22143',
+            :libvirt__tunnel_port => '31213',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-fc4-1:fp19
@@ -4622,9 +4667,9 @@ end
             :mac => "44:38:39:00:04:38",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21476',
+            :libvirt__tunnel_local_port => '30546',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22476',
+            :libvirt__tunnel_port => '31546',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp5 --> leaf05:swp54
@@ -4632,9 +4677,9 @@ end
             :mac => "44:38:39:00:01:bf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22155',
+            :libvirt__tunnel_local_port => '31225',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21155',
+            :libvirt__tunnel_port => '30225',
             :libvirt__iface_name => 'swp5',
             auto_config: false
 
@@ -4733,7 +4778,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:bf --> swp5"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:bf", NAME="swp5", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -4749,9 +4794,9 @@ end
 
   ##### DEFINE VM for chassis04-fc1-1 #####
   config.vm.define "chassis04-fc1-1" do |device|
-
-    device.vm.hostname = "chassis04-fc1-1"
-
+    
+    device.vm.hostname = "chassis04-fc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -4769,9 +4814,9 @@ end
             :mac => "44:38:39:00:04:60",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22497',
+            :libvirt__tunnel_local_port => '31567',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21497',
+            :libvirt__tunnel_port => '30567',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-lc1-1:fp0
@@ -4779,9 +4824,9 @@ end
             :mac => "44:38:39:00:02:fc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22315',
+            :libvirt__tunnel_local_port => '31385',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21315',
+            :libvirt__tunnel_port => '30385',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-lc1-1:fp1
@@ -4789,9 +4834,9 @@ end
             :mac => "44:38:39:00:00:cd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22034',
+            :libvirt__tunnel_local_port => '31104',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21034',
+            :libvirt__tunnel_port => '30104',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-lc1-1:fp2
@@ -4799,9 +4844,9 @@ end
             :mac => "44:38:39:00:02:1b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22201',
+            :libvirt__tunnel_local_port => '31271',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21201',
+            :libvirt__tunnel_port => '30271',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-lc1-1:fp3
@@ -4809,9 +4854,9 @@ end
             :mac => "44:38:39:00:00:80",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21995',
+            :libvirt__tunnel_local_port => '31065',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20995',
+            :libvirt__tunnel_port => '30065',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-lc1-2:fp0
@@ -4819,9 +4864,9 @@ end
             :mac => "44:38:39:00:02:ec",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22307',
+            :libvirt__tunnel_local_port => '31377',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21307',
+            :libvirt__tunnel_port => '30377',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-lc1-2:fp1
@@ -4829,9 +4874,9 @@ end
             :mac => "44:38:39:00:02:bc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22283',
+            :libvirt__tunnel_local_port => '31353',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21283',
+            :libvirt__tunnel_port => '30353',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-lc1-2:fp2
@@ -4839,9 +4884,9 @@ end
             :mac => "44:38:39:00:02:ba",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22282',
+            :libvirt__tunnel_local_port => '31352',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21282',
+            :libvirt__tunnel_port => '30352',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-lc1-2:fp3
@@ -4849,9 +4894,9 @@ end
             :mac => "44:38:39:00:03:0a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22322',
+            :libvirt__tunnel_local_port => '31392',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21322',
+            :libvirt__tunnel_port => '30392',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-lc2-1:fp0
@@ -4859,9 +4904,9 @@ end
             :mac => "44:38:39:00:03:e7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22434',
+            :libvirt__tunnel_local_port => '31504',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21434',
+            :libvirt__tunnel_port => '30504',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-lc2-1:fp1
@@ -4869,9 +4914,9 @@ end
             :mac => "44:38:39:00:01:63",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22109',
+            :libvirt__tunnel_local_port => '31179',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21109',
+            :libvirt__tunnel_port => '30179',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-lc2-1:fp2
@@ -4879,9 +4924,9 @@ end
             :mac => "44:38:39:00:02:e8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22305',
+            :libvirt__tunnel_local_port => '31375',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21305',
+            :libvirt__tunnel_port => '30375',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-lc2-1:fp3
@@ -4889,9 +4934,9 @@ end
             :mac => "44:38:39:00:03:16",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22328',
+            :libvirt__tunnel_local_port => '31398',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21328',
+            :libvirt__tunnel_port => '30398',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-lc2-2:fp0
@@ -4899,9 +4944,9 @@ end
             :mac => "44:38:39:00:03:fa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22444',
+            :libvirt__tunnel_local_port => '31514',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21444',
+            :libvirt__tunnel_port => '30514',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-lc2-2:fp1
@@ -4909,9 +4954,9 @@ end
             :mac => "44:38:39:00:02:82",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22254',
+            :libvirt__tunnel_local_port => '31324',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21254',
+            :libvirt__tunnel_port => '30324',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-lc2-2:fp2
@@ -4919,9 +4964,9 @@ end
             :mac => "44:38:39:00:04:08",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22451',
+            :libvirt__tunnel_local_port => '31521',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21451',
+            :libvirt__tunnel_port => '30521',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-lc2-2:fp3
@@ -4929,9 +4974,9 @@ end
             :mac => "44:38:39:00:03:ce",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22421',
+            :libvirt__tunnel_local_port => '31491',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21421',
+            :libvirt__tunnel_port => '30491',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis04-lc3-1:fp0
@@ -4939,9 +4984,9 @@ end
             :mac => "44:38:39:00:02:0f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22195',
+            :libvirt__tunnel_local_port => '31265',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21195',
+            :libvirt__tunnel_port => '30265',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis04-lc3-1:fp1
@@ -4949,9 +4994,9 @@ end
             :mac => "44:38:39:00:00:5e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21978',
+            :libvirt__tunnel_local_port => '31048',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20978',
+            :libvirt__tunnel_port => '30048',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis04-lc3-1:fp2
@@ -4959,9 +5004,9 @@ end
             :mac => "44:38:39:00:02:05",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22190',
+            :libvirt__tunnel_local_port => '31260',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21190',
+            :libvirt__tunnel_port => '30260',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis04-lc3-1:fp3
@@ -4969,9 +5014,9 @@ end
             :mac => "44:38:39:00:02:5d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22235',
+            :libvirt__tunnel_local_port => '31305',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21235',
+            :libvirt__tunnel_port => '30305',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis04-lc3-2:fp0
@@ -4979,9 +5024,9 @@ end
             :mac => "44:38:39:00:02:d2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22294',
+            :libvirt__tunnel_local_port => '31364',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21294',
+            :libvirt__tunnel_port => '30364',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis04-lc3-2:fp1
@@ -4989,9 +5034,9 @@ end
             :mac => "44:38:39:00:02:a8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22273',
+            :libvirt__tunnel_local_port => '31343',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21273',
+            :libvirt__tunnel_port => '30343',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis04-lc3-2:fp2
@@ -4999,9 +5044,9 @@ end
             :mac => "44:38:39:00:02:42",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22221',
+            :libvirt__tunnel_local_port => '31291',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21221',
+            :libvirt__tunnel_port => '30291',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis04-lc3-2:fp3
@@ -5009,9 +5054,9 @@ end
             :mac => "44:38:39:00:03:80",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22382',
+            :libvirt__tunnel_local_port => '31452',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21382',
+            :libvirt__tunnel_port => '30452',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis04-lc4-1:fp0
@@ -5019,9 +5064,9 @@ end
             :mac => "44:38:39:00:01:73",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22117',
+            :libvirt__tunnel_local_port => '31187',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21117',
+            :libvirt__tunnel_port => '30187',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis04-lc4-1:fp1
@@ -5029,9 +5074,9 @@ end
             :mac => "44:38:39:00:01:19",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22072',
+            :libvirt__tunnel_local_port => '31142',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21072',
+            :libvirt__tunnel_port => '30142',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis04-lc4-1:fp2
@@ -5039,9 +5084,9 @@ end
             :mac => "44:38:39:00:03:14",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22327',
+            :libvirt__tunnel_local_port => '31397',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21327',
+            :libvirt__tunnel_port => '30397',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis04-lc4-1:fp3
@@ -5049,9 +5094,9 @@ end
             :mac => "44:38:39:00:00:b7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22023',
+            :libvirt__tunnel_local_port => '31093',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21023',
+            :libvirt__tunnel_port => '30093',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis04-lc4-2:fp0
@@ -5059,9 +5104,9 @@ end
             :mac => "44:38:39:00:00:92",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22004',
+            :libvirt__tunnel_local_port => '31074',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21004',
+            :libvirt__tunnel_port => '30074',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis04-lc4-2:fp1
@@ -5069,9 +5114,9 @@ end
             :mac => "44:38:39:00:01:11",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22068',
+            :libvirt__tunnel_local_port => '31138',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21068',
+            :libvirt__tunnel_port => '30138',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis04-lc4-2:fp2
@@ -5079,9 +5124,9 @@ end
             :mac => "44:38:39:00:01:1d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22074',
+            :libvirt__tunnel_local_port => '31144',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21074',
+            :libvirt__tunnel_port => '30144',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis04-lc4-2:fp3
@@ -5089,9 +5134,9 @@ end
             :mac => "44:38:39:00:03:ca",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22419',
+            :libvirt__tunnel_local_port => '31489',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21419',
+            :libvirt__tunnel_port => '30489',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -5250,7 +5295,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:ca --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:ca", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -5266,9 +5311,9 @@ end
 
   ##### DEFINE VM for chassis03-fc4-1 #####
   config.vm.define "chassis03-fc4-1" do |device|
-
-    device.vm.hostname = "chassis03-fc4-1"
-
+    
+    device.vm.hostname = "chassis03-fc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -5286,9 +5331,9 @@ end
             :mac => "44:38:39:00:04:62",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22498',
+            :libvirt__tunnel_local_port => '31568',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21498',
+            :libvirt__tunnel_port => '30568',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-lc1-1:fp12
@@ -5296,9 +5341,9 @@ end
             :mac => "44:38:39:00:00:66",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21982',
+            :libvirt__tunnel_local_port => '31052',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20982',
+            :libvirt__tunnel_port => '30052',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-lc1-1:fp13
@@ -5306,9 +5351,9 @@ end
             :mac => "44:38:39:00:00:a4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22013',
+            :libvirt__tunnel_local_port => '31083',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21013',
+            :libvirt__tunnel_port => '30083',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-lc1-1:fp14
@@ -5316,9 +5361,9 @@ end
             :mac => "44:38:39:00:01:05",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22062',
+            :libvirt__tunnel_local_port => '31132',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21062',
+            :libvirt__tunnel_port => '30132',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-lc1-1:fp15
@@ -5326,9 +5371,9 @@ end
             :mac => "44:38:39:00:02:67",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22240',
+            :libvirt__tunnel_local_port => '31310',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21240',
+            :libvirt__tunnel_port => '30310',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-lc1-2:fp12
@@ -5336,9 +5381,9 @@ end
             :mac => "44:38:39:00:02:03",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22189',
+            :libvirt__tunnel_local_port => '31259',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21189',
+            :libvirt__tunnel_port => '30259',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-lc1-2:fp13
@@ -5346,9 +5391,9 @@ end
             :mac => "44:38:39:00:02:7a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22250',
+            :libvirt__tunnel_local_port => '31320',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21250',
+            :libvirt__tunnel_port => '30320',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-lc1-2:fp14
@@ -5356,9 +5401,9 @@ end
             :mac => "44:38:39:00:02:36",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22215',
+            :libvirt__tunnel_local_port => '31285',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21215',
+            :libvirt__tunnel_port => '30285',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-lc1-2:fp15
@@ -5366,9 +5411,9 @@ end
             :mac => "44:38:39:00:00:c7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22031',
+            :libvirt__tunnel_local_port => '31101',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21031',
+            :libvirt__tunnel_port => '30101',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-lc2-1:fp12
@@ -5376,9 +5421,9 @@ end
             :mac => "44:38:39:00:01:c5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22158',
+            :libvirt__tunnel_local_port => '31228',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21158',
+            :libvirt__tunnel_port => '30228',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-lc2-1:fp13
@@ -5386,9 +5431,9 @@ end
             :mac => "44:38:39:00:00:b9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22024',
+            :libvirt__tunnel_local_port => '31094',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21024',
+            :libvirt__tunnel_port => '30094',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-lc2-1:fp14
@@ -5396,9 +5441,9 @@ end
             :mac => "44:38:39:00:03:a4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22400',
+            :libvirt__tunnel_local_port => '31470',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21400',
+            :libvirt__tunnel_port => '30470',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-lc2-1:fp15
@@ -5406,9 +5451,9 @@ end
             :mac => "44:38:39:00:03:84",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22384',
+            :libvirt__tunnel_local_port => '31454',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21384',
+            :libvirt__tunnel_port => '30454',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-lc2-2:fp12
@@ -5416,9 +5461,9 @@ end
             :mac => "44:38:39:00:03:b4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22408',
+            :libvirt__tunnel_local_port => '31478',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21408',
+            :libvirt__tunnel_port => '30478',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-lc2-2:fp13
@@ -5426,9 +5471,9 @@ end
             :mac => "44:38:39:00:01:6b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22113',
+            :libvirt__tunnel_local_port => '31183',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21113',
+            :libvirt__tunnel_port => '30183',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-lc2-2:fp14
@@ -5436,9 +5481,9 @@ end
             :mac => "44:38:39:00:01:0d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22066',
+            :libvirt__tunnel_local_port => '31136',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21066',
+            :libvirt__tunnel_port => '30136',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-lc2-2:fp15
@@ -5446,9 +5491,9 @@ end
             :mac => "44:38:39:00:01:ff",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22187',
+            :libvirt__tunnel_local_port => '31257',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21187',
+            :libvirt__tunnel_port => '30257',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis03-lc3-1:fp12
@@ -5456,9 +5501,9 @@ end
             :mac => "44:38:39:00:03:a2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22399',
+            :libvirt__tunnel_local_port => '31469',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21399',
+            :libvirt__tunnel_port => '30469',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis03-lc3-1:fp13
@@ -5466,9 +5511,9 @@ end
             :mac => "44:38:39:00:03:3a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22346',
+            :libvirt__tunnel_local_port => '31416',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21346',
+            :libvirt__tunnel_port => '30416',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis03-lc3-1:fp14
@@ -5476,9 +5521,9 @@ end
             :mac => "44:38:39:00:01:55",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22102',
+            :libvirt__tunnel_local_port => '31172',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21102',
+            :libvirt__tunnel_port => '30172',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis03-lc3-1:fp15
@@ -5486,9 +5531,9 @@ end
             :mac => "44:38:39:00:03:76",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22377',
+            :libvirt__tunnel_local_port => '31447',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21377',
+            :libvirt__tunnel_port => '30447',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis03-lc3-2:fp12
@@ -5496,9 +5541,9 @@ end
             :mac => "44:38:39:00:00:c1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22028',
+            :libvirt__tunnel_local_port => '31098',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21028',
+            :libvirt__tunnel_port => '30098',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis03-lc3-2:fp13
@@ -5506,9 +5551,9 @@ end
             :mac => "44:38:39:00:01:65",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22110',
+            :libvirt__tunnel_local_port => '31180',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21110',
+            :libvirt__tunnel_port => '30180',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis03-lc3-2:fp14
@@ -5516,9 +5561,9 @@ end
             :mac => "44:38:39:00:03:be",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22413',
+            :libvirt__tunnel_local_port => '31483',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21413',
+            :libvirt__tunnel_port => '30483',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis03-lc3-2:fp15
@@ -5526,9 +5571,9 @@ end
             :mac => "44:38:39:00:00:22",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21947',
+            :libvirt__tunnel_local_port => '31017',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20947',
+            :libvirt__tunnel_port => '30017',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis03-lc4-1:fp12
@@ -5536,9 +5581,9 @@ end
             :mac => "44:38:39:00:04:31",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22472',
+            :libvirt__tunnel_local_port => '31542',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21472',
+            :libvirt__tunnel_port => '30542',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis03-lc4-1:fp13
@@ -5546,9 +5591,9 @@ end
             :mac => "44:38:39:00:04:3f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22479',
+            :libvirt__tunnel_local_port => '31549',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21479',
+            :libvirt__tunnel_port => '30549',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis03-lc4-1:fp14
@@ -5556,9 +5601,9 @@ end
             :mac => "44:38:39:00:04:41",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22480',
+            :libvirt__tunnel_local_port => '31550',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21480',
+            :libvirt__tunnel_port => '30550',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis03-lc4-1:fp15
@@ -5566,9 +5611,9 @@ end
             :mac => "44:38:39:00:00:84",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21997',
+            :libvirt__tunnel_local_port => '31067',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20997',
+            :libvirt__tunnel_port => '30067',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis03-lc4-2:fp12
@@ -5576,9 +5621,9 @@ end
             :mac => "44:38:39:00:02:fa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22314',
+            :libvirt__tunnel_local_port => '31384',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21314',
+            :libvirt__tunnel_port => '30384',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis03-lc4-2:fp13
@@ -5586,9 +5631,9 @@ end
             :mac => "44:38:39:00:01:49",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22096',
+            :libvirt__tunnel_local_port => '31166',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21096',
+            :libvirt__tunnel_port => '30166',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis03-lc4-2:fp14
@@ -5596,9 +5641,9 @@ end
             :mac => "44:38:39:00:01:ab",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22145',
+            :libvirt__tunnel_local_port => '31215',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21145',
+            :libvirt__tunnel_port => '30215',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis03-lc4-2:fp15
@@ -5606,9 +5651,9 @@ end
             :mac => "44:38:39:00:00:58",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21975',
+            :libvirt__tunnel_local_port => '31045',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20975',
+            :libvirt__tunnel_port => '30045',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -5767,7 +5812,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:58 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:58", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -5783,9 +5828,9 @@ end
 
   ##### DEFINE VM for chassis04-lc2-1 #####
   config.vm.define "chassis04-lc2-1" do |device|
-
-    device.vm.hostname = "chassis04-lc2-1"
-
+    
+    device.vm.hostname = "chassis04-lc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -5803,9 +5848,9 @@ end
             :mac => "44:38:39:00:04:6c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22503',
+            :libvirt__tunnel_local_port => '31573',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21503',
+            :libvirt__tunnel_port => '30573',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-fc1-1:fp8
@@ -5813,9 +5858,9 @@ end
             :mac => "44:38:39:00:03:e6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21434',
+            :libvirt__tunnel_local_port => '30504',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22434',
+            :libvirt__tunnel_port => '31504',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-fc1-1:fp9
@@ -5823,9 +5868,9 @@ end
             :mac => "44:38:39:00:01:62",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21109',
+            :libvirt__tunnel_local_port => '30179',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22109',
+            :libvirt__tunnel_port => '31179',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-fc1-1:fp10
@@ -5833,9 +5878,9 @@ end
             :mac => "44:38:39:00:02:e7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21305',
+            :libvirt__tunnel_local_port => '30375',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22305',
+            :libvirt__tunnel_port => '31375',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-fc1-1:fp11
@@ -5843,9 +5888,9 @@ end
             :mac => "44:38:39:00:03:15",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21328',
+            :libvirt__tunnel_local_port => '30398',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22328',
+            :libvirt__tunnel_port => '31398',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-fc2-1:fp8
@@ -5853,9 +5898,9 @@ end
             :mac => "44:38:39:00:01:d2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21165',
+            :libvirt__tunnel_local_port => '30235',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22165',
+            :libvirt__tunnel_port => '31235',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-fc2-1:fp9
@@ -5863,9 +5908,9 @@ end
             :mac => "44:38:39:00:01:ba",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21153',
+            :libvirt__tunnel_local_port => '30223',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22153',
+            :libvirt__tunnel_port => '31223',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-fc2-1:fp10
@@ -5873,9 +5918,9 @@ end
             :mac => "44:38:39:00:01:86",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21127',
+            :libvirt__tunnel_local_port => '30197',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22127',
+            :libvirt__tunnel_port => '31197',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-fc2-1:fp11
@@ -5883,9 +5928,9 @@ end
             :mac => "44:38:39:00:01:60",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21108',
+            :libvirt__tunnel_local_port => '30178',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22108',
+            :libvirt__tunnel_port => '31178',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-fc3-1:fp8
@@ -5893,9 +5938,9 @@ end
             :mac => "44:38:39:00:01:2c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21082',
+            :libvirt__tunnel_local_port => '30152',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22082',
+            :libvirt__tunnel_port => '31152',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-fc3-1:fp9
@@ -5903,9 +5948,9 @@ end
             :mac => "44:38:39:00:03:bb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21412',
+            :libvirt__tunnel_local_port => '30482',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22412',
+            :libvirt__tunnel_port => '31482',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-fc3-1:fp10
@@ -5913,9 +5958,9 @@ end
             :mac => "44:38:39:00:03:1b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21331',
+            :libvirt__tunnel_local_port => '30401',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22331',
+            :libvirt__tunnel_port => '31401',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-fc3-1:fp11
@@ -5923,9 +5968,9 @@ end
             :mac => "44:38:39:00:01:58",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21104',
+            :libvirt__tunnel_local_port => '30174',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22104',
+            :libvirt__tunnel_port => '31174',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-fc4-1:fp8
@@ -5933,9 +5978,9 @@ end
             :mac => "44:38:39:00:00:be",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21027',
+            :libvirt__tunnel_local_port => '30097',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22027',
+            :libvirt__tunnel_port => '31097',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-fc4-1:fp9
@@ -5943,9 +5988,9 @@ end
             :mac => "44:38:39:00:00:8f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21003',
+            :libvirt__tunnel_local_port => '30073',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22003',
+            :libvirt__tunnel_port => '31073',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-fc4-1:fp10
@@ -5953,9 +5998,9 @@ end
             :mac => "44:38:39:00:01:88",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21128',
+            :libvirt__tunnel_local_port => '30198',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22128',
+            :libvirt__tunnel_port => '31198',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-fc4-1:fp11
@@ -5963,9 +6008,9 @@ end
             :mac => "44:38:39:00:00:3c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20961',
+            :libvirt__tunnel_local_port => '30031',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21961',
+            :libvirt__tunnel_port => '31031',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp3 --> leaf03:swp54
@@ -5973,9 +6018,9 @@ end
             :mac => "44:38:39:00:03:da",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22427',
+            :libvirt__tunnel_local_port => '31497',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21427',
+            :libvirt__tunnel_port => '30497',
             :libvirt__iface_name => 'swp3',
             auto_config: false
 
@@ -6074,7 +6119,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:da --> swp3"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:da", NAME="swp3", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -6090,9 +6135,9 @@ end
 
   ##### DEFINE VM for chassis03-lc2-1 #####
   config.vm.define "chassis03-lc2-1" do |device|
-
-    device.vm.hostname = "chassis03-lc2-1"
-
+    
+    device.vm.hostname = "chassis03-lc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -6110,9 +6155,9 @@ end
             :mac => "44:38:39:00:04:6e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22504',
+            :libvirt__tunnel_local_port => '31574',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21504',
+            :libvirt__tunnel_port => '30574',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-fc1-1:fp8
@@ -6120,9 +6165,9 @@ end
             :mac => "44:38:39:00:01:ee",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21179',
+            :libvirt__tunnel_local_port => '30249',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22179',
+            :libvirt__tunnel_port => '31249',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-fc1-1:fp9
@@ -6130,9 +6175,9 @@ end
             :mac => "44:38:39:00:04:05",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21450',
+            :libvirt__tunnel_local_port => '30520',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22450',
+            :libvirt__tunnel_port => '31520',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-fc1-1:fp10
@@ -6140,9 +6185,9 @@ end
             :mac => "44:38:39:00:03:e4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21433',
+            :libvirt__tunnel_local_port => '30503',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22433',
+            :libvirt__tunnel_port => '31503',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-fc1-1:fp11
@@ -6150,9 +6195,9 @@ end
             :mac => "44:38:39:00:01:66",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21111',
+            :libvirt__tunnel_local_port => '30181',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22111',
+            :libvirt__tunnel_port => '31181',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-fc2-1:fp8
@@ -6160,9 +6205,9 @@ end
             :mac => "44:38:39:00:04:0d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21454',
+            :libvirt__tunnel_local_port => '30524',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22454',
+            :libvirt__tunnel_port => '31524',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-fc2-1:fp9
@@ -6170,9 +6215,9 @@ end
             :mac => "44:38:39:00:00:ae",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21019',
+            :libvirt__tunnel_local_port => '30089',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22019',
+            :libvirt__tunnel_port => '31089',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-fc2-1:fp10
@@ -6180,9 +6225,9 @@ end
             :mac => "44:38:39:00:00:09",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20935',
+            :libvirt__tunnel_local_port => '30005',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21935',
+            :libvirt__tunnel_port => '31005',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-fc2-1:fp11
@@ -6190,9 +6235,9 @@ end
             :mac => "44:38:39:00:01:96",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21135',
+            :libvirt__tunnel_local_port => '30205',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22135',
+            :libvirt__tunnel_port => '31205',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-fc3-1:fp8
@@ -6200,9 +6245,9 @@ end
             :mac => "44:38:39:00:02:e5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21304',
+            :libvirt__tunnel_local_port => '30374',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22304',
+            :libvirt__tunnel_port => '31374',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-fc3-1:fp9
@@ -6210,9 +6255,9 @@ end
             :mac => "44:38:39:00:03:67",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21370',
+            :libvirt__tunnel_local_port => '30440',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22370',
+            :libvirt__tunnel_port => '31440',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-fc3-1:fp10
@@ -6220,9 +6265,9 @@ end
             :mac => "44:38:39:00:02:cd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21292',
+            :libvirt__tunnel_local_port => '30362',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22292',
+            :libvirt__tunnel_port => '31362',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-fc3-1:fp11
@@ -6230,9 +6275,9 @@ end
             :mac => "44:38:39:00:00:63",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20981',
+            :libvirt__tunnel_local_port => '30051',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21981',
+            :libvirt__tunnel_port => '31051',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-fc4-1:fp8
@@ -6240,9 +6285,9 @@ end
             :mac => "44:38:39:00:01:c4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21158',
+            :libvirt__tunnel_local_port => '30228',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22158',
+            :libvirt__tunnel_port => '31228',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-fc4-1:fp9
@@ -6250,9 +6295,9 @@ end
             :mac => "44:38:39:00:00:b8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21024',
+            :libvirt__tunnel_local_port => '30094',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22024',
+            :libvirt__tunnel_port => '31094',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-fc4-1:fp10
@@ -6260,9 +6305,9 @@ end
             :mac => "44:38:39:00:03:a3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21400',
+            :libvirt__tunnel_local_port => '30470',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22400',
+            :libvirt__tunnel_port => '31470',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-fc4-1:fp11
@@ -6270,9 +6315,9 @@ end
             :mac => "44:38:39:00:03:83",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21384',
+            :libvirt__tunnel_local_port => '30454',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22384',
+            :libvirt__tunnel_port => '31454',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp3 --> leaf03:swp53
@@ -6280,9 +6325,9 @@ end
             :mac => "44:38:39:00:02:34",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22214',
+            :libvirt__tunnel_local_port => '31284',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21214',
+            :libvirt__tunnel_port => '30284',
             :libvirt__iface_name => 'swp3',
             auto_config: false
 
@@ -6381,7 +6426,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:34 --> swp3"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:34", NAME="swp3", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -6397,9 +6442,9 @@ end
 
   ##### DEFINE VM for chassis01-fc4-1 #####
   config.vm.define "chassis01-fc4-1" do |device|
-
-    device.vm.hostname = "chassis01-fc4-1"
-
+    
+    device.vm.hostname = "chassis01-fc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -6417,9 +6462,9 @@ end
             :mac => "44:38:39:00:04:72",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22506',
+            :libvirt__tunnel_local_port => '31576',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21506',
+            :libvirt__tunnel_port => '30576',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-lc1-1:fp12
@@ -6427,9 +6472,9 @@ end
             :mac => "44:38:39:00:00:bd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22026',
+            :libvirt__tunnel_local_port => '31096',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21026',
+            :libvirt__tunnel_port => '30096',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-lc1-1:fp13
@@ -6437,9 +6482,9 @@ end
             :mac => "44:38:39:00:03:ee",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22438',
+            :libvirt__tunnel_local_port => '31508',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21438',
+            :libvirt__tunnel_port => '30508',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-lc1-1:fp14
@@ -6447,9 +6492,9 @@ end
             :mac => "44:38:39:00:02:ee",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22308',
+            :libvirt__tunnel_local_port => '31378',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21308',
+            :libvirt__tunnel_port => '30378',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-lc1-1:fp15
@@ -6457,9 +6502,9 @@ end
             :mac => "44:38:39:00:00:9a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22008',
+            :libvirt__tunnel_local_port => '31078',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21008',
+            :libvirt__tunnel_port => '30078',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-lc1-2:fp12
@@ -6467,9 +6512,9 @@ end
             :mac => "44:38:39:00:02:a4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22271',
+            :libvirt__tunnel_local_port => '31341',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21271',
+            :libvirt__tunnel_port => '30341',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-lc1-2:fp13
@@ -6477,9 +6522,9 @@ end
             :mac => "44:38:39:00:03:32",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22342',
+            :libvirt__tunnel_local_port => '31412',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21342',
+            :libvirt__tunnel_port => '30412',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-lc1-2:fp14
@@ -6487,9 +6532,9 @@ end
             :mac => "44:38:39:00:01:47",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22095',
+            :libvirt__tunnel_local_port => '31165',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21095',
+            :libvirt__tunnel_port => '30165',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-lc1-2:fp15
@@ -6497,9 +6542,9 @@ end
             :mac => "44:38:39:00:04:0a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22452',
+            :libvirt__tunnel_local_port => '31522',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21452',
+            :libvirt__tunnel_port => '30522',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-lc2-1:fp12
@@ -6507,9 +6552,9 @@ end
             :mac => "44:38:39:00:01:f7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22183',
+            :libvirt__tunnel_local_port => '31253',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21183',
+            :libvirt__tunnel_port => '30253',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-lc2-1:fp13
@@ -6517,9 +6562,9 @@ end
             :mac => "44:38:39:00:03:88",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22386',
+            :libvirt__tunnel_local_port => '31456',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21386',
+            :libvirt__tunnel_port => '30456',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-lc2-1:fp14
@@ -6527,9 +6572,9 @@ end
             :mac => "44:38:39:00:00:4d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21969',
+            :libvirt__tunnel_local_port => '31039',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20969',
+            :libvirt__tunnel_port => '30039',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-lc2-1:fp15
@@ -6537,9 +6582,9 @@ end
             :mac => "44:38:39:00:00:e1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22044',
+            :libvirt__tunnel_local_port => '31114',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21044',
+            :libvirt__tunnel_port => '30114',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-lc2-2:fp12
@@ -6547,9 +6592,9 @@ end
             :mac => "44:38:39:00:03:c0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22414',
+            :libvirt__tunnel_local_port => '31484',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21414',
+            :libvirt__tunnel_port => '30484',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-lc2-2:fp13
@@ -6557,9 +6602,9 @@ end
             :mac => "44:38:39:00:01:4d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22098',
+            :libvirt__tunnel_local_port => '31168',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21098',
+            :libvirt__tunnel_port => '30168',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-lc2-2:fp14
@@ -6567,9 +6612,9 @@ end
             :mac => "44:38:39:00:03:d2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22423',
+            :libvirt__tunnel_local_port => '31493',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21423',
+            :libvirt__tunnel_port => '30493',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-lc2-2:fp15
@@ -6577,9 +6622,9 @@ end
             :mac => "44:38:39:00:01:85",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22126',
+            :libvirt__tunnel_local_port => '31196',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21126',
+            :libvirt__tunnel_port => '30196',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis01-lc3-1:fp12
@@ -6587,9 +6632,9 @@ end
             :mac => "44:38:39:00:02:b4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22279',
+            :libvirt__tunnel_local_port => '31349',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21279',
+            :libvirt__tunnel_port => '30349',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis01-lc3-1:fp13
@@ -6597,9 +6642,9 @@ end
             :mac => "44:38:39:00:00:ff",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22059',
+            :libvirt__tunnel_local_port => '31129',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21059',
+            :libvirt__tunnel_port => '30129',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis01-lc3-1:fp14
@@ -6607,9 +6652,9 @@ end
             :mac => "44:38:39:00:00:04",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21932',
+            :libvirt__tunnel_local_port => '31002',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20932',
+            :libvirt__tunnel_port => '30002',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis01-lc3-1:fp15
@@ -6617,9 +6662,9 @@ end
             :mac => "44:38:39:00:04:2d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22470',
+            :libvirt__tunnel_local_port => '31540',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21470',
+            :libvirt__tunnel_port => '30540',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis01-lc3-2:fp12
@@ -6627,9 +6672,9 @@ end
             :mac => "44:38:39:00:02:f4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22311',
+            :libvirt__tunnel_local_port => '31381',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21311',
+            :libvirt__tunnel_port => '30381',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis01-lc3-2:fp13
@@ -6637,9 +6682,9 @@ end
             :mac => "44:38:39:00:02:fe",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22316',
+            :libvirt__tunnel_local_port => '31386',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21316',
+            :libvirt__tunnel_port => '30386',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis01-lc3-2:fp14
@@ -6647,9 +6692,9 @@ end
             :mac => "44:38:39:00:01:13",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22069',
+            :libvirt__tunnel_local_port => '31139',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21069',
+            :libvirt__tunnel_port => '30139',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis01-lc3-2:fp15
@@ -6657,9 +6702,9 @@ end
             :mac => "44:38:39:00:02:50",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22228',
+            :libvirt__tunnel_local_port => '31298',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21228',
+            :libvirt__tunnel_port => '30298',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis01-lc4-1:fp12
@@ -6667,9 +6712,9 @@ end
             :mac => "44:38:39:00:03:ac",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22404',
+            :libvirt__tunnel_local_port => '31474',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21404',
+            :libvirt__tunnel_port => '30474',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis01-lc4-1:fp13
@@ -6677,9 +6722,9 @@ end
             :mac => "44:38:39:00:01:21",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22076',
+            :libvirt__tunnel_local_port => '31146',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21076',
+            :libvirt__tunnel_port => '30146',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis01-lc4-1:fp14
@@ -6687,9 +6732,9 @@ end
             :mac => "44:38:39:00:01:c1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22156',
+            :libvirt__tunnel_local_port => '31226',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21156',
+            :libvirt__tunnel_port => '30226',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis01-lc4-1:fp15
@@ -6697,9 +6742,9 @@ end
             :mac => "44:38:39:00:01:6f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22115',
+            :libvirt__tunnel_local_port => '31185',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21115',
+            :libvirt__tunnel_port => '30185',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis01-lc4-2:fp12
@@ -6707,9 +6752,9 @@ end
             :mac => "44:38:39:00:00:32",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21955',
+            :libvirt__tunnel_local_port => '31025',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20955',
+            :libvirt__tunnel_port => '30025',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis01-lc4-2:fp13
@@ -6717,9 +6762,9 @@ end
             :mac => "44:38:39:00:03:b2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22407',
+            :libvirt__tunnel_local_port => '31477',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21407',
+            :libvirt__tunnel_port => '30477',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis01-lc4-2:fp14
@@ -6727,9 +6772,9 @@ end
             :mac => "44:38:39:00:00:10",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21938',
+            :libvirt__tunnel_local_port => '31008',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20938',
+            :libvirt__tunnel_port => '30008',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis01-lc4-2:fp15
@@ -6737,9 +6782,9 @@ end
             :mac => "44:38:39:00:02:7c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22251',
+            :libvirt__tunnel_local_port => '31321',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21251',
+            :libvirt__tunnel_port => '30321',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -6898,7 +6943,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:7c --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:7c", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -6914,9 +6959,9 @@ end
 
   ##### DEFINE VM for chassis01-fc1-1 #####
   config.vm.define "chassis01-fc1-1" do |device|
-
-    device.vm.hostname = "chassis01-fc1-1"
-
+    
+    device.vm.hostname = "chassis01-fc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -6934,9 +6979,9 @@ end
             :mac => "44:38:39:00:04:74",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22507',
+            :libvirt__tunnel_local_port => '31577',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21507',
+            :libvirt__tunnel_port => '30577',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-lc1-1:fp0
@@ -6944,9 +6989,9 @@ end
             :mac => "44:38:39:00:01:f9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22184',
+            :libvirt__tunnel_local_port => '31254',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21184',
+            :libvirt__tunnel_port => '30254',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-lc1-1:fp1
@@ -6954,9 +6999,9 @@ end
             :mac => "44:38:39:00:03:f0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22439',
+            :libvirt__tunnel_local_port => '31509',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21439',
+            :libvirt__tunnel_port => '30509',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-lc1-1:fp2
@@ -6964,9 +7009,9 @@ end
             :mac => "44:38:39:00:03:5d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22364',
+            :libvirt__tunnel_local_port => '31434',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21364',
+            :libvirt__tunnel_port => '30434',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-lc1-1:fp3
@@ -6974,9 +7019,9 @@ end
             :mac => "44:38:39:00:01:69",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22112',
+            :libvirt__tunnel_local_port => '31182',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21112',
+            :libvirt__tunnel_port => '30182',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-lc1-2:fp0
@@ -6984,9 +7029,9 @@ end
             :mac => "44:38:39:00:03:d6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22425',
+            :libvirt__tunnel_local_port => '31495',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21425',
+            :libvirt__tunnel_port => '30495',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-lc1-2:fp1
@@ -6994,9 +7039,9 @@ end
             :mac => "44:38:39:00:02:58",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22232',
+            :libvirt__tunnel_local_port => '31302',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21232',
+            :libvirt__tunnel_port => '30302',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-lc1-2:fp2
@@ -7004,9 +7049,9 @@ end
             :mac => "44:38:39:00:00:2e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21953',
+            :libvirt__tunnel_local_port => '31023',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20953',
+            :libvirt__tunnel_port => '30023',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-lc1-2:fp3
@@ -7014,9 +7059,9 @@ end
             :mac => "44:38:39:00:03:41",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22350',
+            :libvirt__tunnel_local_port => '31420',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21350',
+            :libvirt__tunnel_port => '30420',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-lc2-1:fp0
@@ -7024,9 +7069,9 @@ end
             :mac => "44:38:39:00:02:76",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22248',
+            :libvirt__tunnel_local_port => '31318',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21248',
+            :libvirt__tunnel_port => '30318',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-lc2-1:fp1
@@ -7034,9 +7079,9 @@ end
             :mac => "44:38:39:00:02:74",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22247',
+            :libvirt__tunnel_local_port => '31317',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21247',
+            :libvirt__tunnel_port => '30317',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-lc2-1:fp2
@@ -7044,9 +7089,9 @@ end
             :mac => "44:38:39:00:02:ca",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22290',
+            :libvirt__tunnel_local_port => '31360',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21290',
+            :libvirt__tunnel_port => '30360',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-lc2-1:fp3
@@ -7054,9 +7099,9 @@ end
             :mac => "44:38:39:00:02:4a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22225',
+            :libvirt__tunnel_local_port => '31295',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21225',
+            :libvirt__tunnel_port => '30295',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-lc2-2:fp0
@@ -7064,9 +7109,9 @@ end
             :mac => "44:38:39:00:03:c4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22416',
+            :libvirt__tunnel_local_port => '31486',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21416',
+            :libvirt__tunnel_port => '30486',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-lc2-2:fp1
@@ -7074,9 +7119,9 @@ end
             :mac => "44:38:39:00:03:06",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22320',
+            :libvirt__tunnel_local_port => '31390',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21320',
+            :libvirt__tunnel_port => '30390',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-lc2-2:fp2
@@ -7084,9 +7129,9 @@ end
             :mac => "44:38:39:00:00:d9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22040',
+            :libvirt__tunnel_local_port => '31110',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21040',
+            :libvirt__tunnel_port => '30110',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-lc2-2:fp3
@@ -7094,9 +7139,9 @@ end
             :mac => "44:38:39:00:03:1e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22332',
+            :libvirt__tunnel_local_port => '31402',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21332',
+            :libvirt__tunnel_port => '30402',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis01-lc3-1:fp0
@@ -7104,9 +7149,9 @@ end
             :mac => "44:38:39:00:03:62",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22367',
+            :libvirt__tunnel_local_port => '31437',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21367',
+            :libvirt__tunnel_port => '30437',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis01-lc3-1:fp1
@@ -7114,9 +7159,9 @@ end
             :mac => "44:38:39:00:00:f7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22055',
+            :libvirt__tunnel_local_port => '31125',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21055',
+            :libvirt__tunnel_port => '30125',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis01-lc3-1:fp2
@@ -7124,9 +7169,9 @@ end
             :mac => "44:38:39:00:03:d4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22424',
+            :libvirt__tunnel_local_port => '31494',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21424',
+            :libvirt__tunnel_port => '30494',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis01-lc3-1:fp3
@@ -7134,9 +7179,9 @@ end
             :mac => "44:38:39:00:03:4d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22356',
+            :libvirt__tunnel_local_port => '31426',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21356',
+            :libvirt__tunnel_port => '30426',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis01-lc3-2:fp0
@@ -7144,9 +7189,9 @@ end
             :mac => "44:38:39:00:03:a6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22401',
+            :libvirt__tunnel_local_port => '31471',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21401',
+            :libvirt__tunnel_port => '30471',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis01-lc3-2:fp1
@@ -7154,9 +7199,9 @@ end
             :mac => "44:38:39:00:02:e2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22302',
+            :libvirt__tunnel_local_port => '31372',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21302',
+            :libvirt__tunnel_port => '30372',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis01-lc3-2:fp2
@@ -7164,9 +7209,9 @@ end
             :mac => "44:38:39:00:02:6d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22243',
+            :libvirt__tunnel_local_port => '31313',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21243',
+            :libvirt__tunnel_port => '30313',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis01-lc3-2:fp3
@@ -7174,9 +7219,9 @@ end
             :mac => "44:38:39:00:00:49",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21967',
+            :libvirt__tunnel_local_port => '31037',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20967',
+            :libvirt__tunnel_port => '30037',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis01-lc4-1:fp0
@@ -7184,9 +7229,9 @@ end
             :mac => "44:38:39:00:00:52",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21972',
+            :libvirt__tunnel_local_port => '31042',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20972',
+            :libvirt__tunnel_port => '30042',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis01-lc4-1:fp1
@@ -7194,9 +7239,9 @@ end
             :mac => "44:38:39:00:04:21",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22464',
+            :libvirt__tunnel_local_port => '31534',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21464',
+            :libvirt__tunnel_port => '30534',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis01-lc4-1:fp2
@@ -7204,9 +7249,9 @@ end
             :mac => "44:38:39:00:01:2b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22081',
+            :libvirt__tunnel_local_port => '31151',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21081',
+            :libvirt__tunnel_port => '30151',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis01-lc4-1:fp3
@@ -7214,9 +7259,9 @@ end
             :mac => "44:38:39:00:03:9a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22395',
+            :libvirt__tunnel_local_port => '31465',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21395',
+            :libvirt__tunnel_port => '30465',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis01-lc4-2:fp0
@@ -7224,9 +7269,9 @@ end
             :mac => "44:38:39:00:02:9c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22267',
+            :libvirt__tunnel_local_port => '31337',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21267',
+            :libvirt__tunnel_port => '30337',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis01-lc4-2:fp1
@@ -7234,9 +7279,9 @@ end
             :mac => "44:38:39:00:03:74",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22376',
+            :libvirt__tunnel_local_port => '31446',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21376',
+            :libvirt__tunnel_port => '30446',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis01-lc4-2:fp2
@@ -7244,9 +7289,9 @@ end
             :mac => "44:38:39:00:00:06",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21933',
+            :libvirt__tunnel_local_port => '31003',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20933',
+            :libvirt__tunnel_port => '30003',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis01-lc4-2:fp3
@@ -7254,9 +7299,9 @@ end
             :mac => "44:38:39:00:03:64",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22368',
+            :libvirt__tunnel_local_port => '31438',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21368',
+            :libvirt__tunnel_port => '30438',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -7415,7 +7460,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:64 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:64", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -7431,9 +7476,9 @@ end
 
   ##### DEFINE VM for chassis02-lc3-1 #####
   config.vm.define "chassis02-lc3-1" do |device|
-
-    device.vm.hostname = "chassis02-lc3-1"
-
+    
+    device.vm.hostname = "chassis02-lc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -7451,9 +7496,9 @@ end
             :mac => "44:38:39:00:04:76",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22508',
+            :libvirt__tunnel_local_port => '31578',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21508',
+            :libvirt__tunnel_port => '30578',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-fc1-1:fp16
@@ -7461,9 +7506,9 @@ end
             :mac => "44:38:39:00:03:c7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21418',
+            :libvirt__tunnel_local_port => '30488',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22418',
+            :libvirt__tunnel_port => '31488',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-fc1-1:fp17
@@ -7471,9 +7516,9 @@ end
             :mac => "44:38:39:00:03:19",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21330',
+            :libvirt__tunnel_local_port => '30400',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22330',
+            :libvirt__tunnel_port => '31400',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-fc1-1:fp18
@@ -7481,9 +7526,9 @@ end
             :mac => "44:38:39:00:03:77",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21378',
+            :libvirt__tunnel_local_port => '30448',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22378',
+            :libvirt__tunnel_port => '31448',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-fc1-1:fp19
@@ -7491,9 +7536,9 @@ end
             :mac => "44:38:39:00:00:81",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20996',
+            :libvirt__tunnel_local_port => '30066',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21996',
+            :libvirt__tunnel_port => '31066',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-fc2-1:fp16
@@ -7501,9 +7546,9 @@ end
             :mac => "44:38:39:00:03:0f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21325',
+            :libvirt__tunnel_local_port => '30395',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22325',
+            :libvirt__tunnel_port => '31395',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-fc2-1:fp17
@@ -7511,9 +7556,9 @@ end
             :mac => "44:38:39:00:01:98",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21136',
+            :libvirt__tunnel_local_port => '30206',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22136',
+            :libvirt__tunnel_port => '31206',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-fc2-1:fp18
@@ -7521,9 +7566,9 @@ end
             :mac => "44:38:39:00:02:77",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21249',
+            :libvirt__tunnel_local_port => '30319',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22249',
+            :libvirt__tunnel_port => '31319',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-fc2-1:fp19
@@ -7531,9 +7576,9 @@ end
             :mac => "44:38:39:00:00:5b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20977',
+            :libvirt__tunnel_local_port => '30047',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21977',
+            :libvirt__tunnel_port => '31047',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-fc3-1:fp16
@@ -7541,9 +7586,9 @@ end
             :mac => "44:38:39:00:00:69",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20984',
+            :libvirt__tunnel_local_port => '30054',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21984',
+            :libvirt__tunnel_port => '31054',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-fc3-1:fp17
@@ -7551,9 +7596,9 @@ end
             :mac => "44:38:39:00:02:3b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21218',
+            :libvirt__tunnel_local_port => '30288',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22218',
+            :libvirt__tunnel_port => '31288',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-fc3-1:fp18
@@ -7561,9 +7606,9 @@ end
             :mac => "44:38:39:00:02:91",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21262',
+            :libvirt__tunnel_local_port => '30332',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22262',
+            :libvirt__tunnel_port => '31332',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-fc3-1:fp19
@@ -7571,9 +7616,9 @@ end
             :mac => "44:38:39:00:03:f1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21440',
+            :libvirt__tunnel_local_port => '30510',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22440',
+            :libvirt__tunnel_port => '31510',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-fc4-1:fp16
@@ -7581,9 +7626,9 @@ end
             :mac => "44:38:39:00:00:77",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20991',
+            :libvirt__tunnel_local_port => '30061',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21991',
+            :libvirt__tunnel_port => '31061',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-fc4-1:fp17
@@ -7591,9 +7636,9 @@ end
             :mac => "44:38:39:00:01:08",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21064',
+            :libvirt__tunnel_local_port => '30134',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22064',
+            :libvirt__tunnel_port => '31134',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-fc4-1:fp18
@@ -7601,9 +7646,9 @@ end
             :mac => "44:38:39:00:00:ca",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21033',
+            :libvirt__tunnel_local_port => '30103',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22033',
+            :libvirt__tunnel_port => '31103',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-fc4-1:fp19
@@ -7611,9 +7656,9 @@ end
             :mac => "44:38:39:00:03:0d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21324',
+            :libvirt__tunnel_local_port => '30394',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22324',
+            :libvirt__tunnel_port => '31394',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp5 --> leaf05:swp52
@@ -7621,9 +7666,9 @@ end
             :mac => "44:38:39:00:03:d8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22426',
+            :libvirt__tunnel_local_port => '31496',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21426',
+            :libvirt__tunnel_port => '30496',
             :libvirt__iface_name => 'swp5',
             auto_config: false
 
@@ -7722,7 +7767,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:d8 --> swp5"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:d8", NAME="swp5", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -7738,9 +7783,9 @@ end
 
   ##### DEFINE VM for chassis04-lc3-2 #####
   config.vm.define "chassis04-lc3-2" do |device|
-
-    device.vm.hostname = "chassis04-lc3-2"
-
+    
+    device.vm.hostname = "chassis04-lc3-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -7758,9 +7803,9 @@ end
             :mac => "44:38:39:00:04:78",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22509',
+            :libvirt__tunnel_local_port => '31579',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21509',
+            :libvirt__tunnel_port => '30579',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-fc1-1:fp20
@@ -7768,9 +7813,9 @@ end
             :mac => "44:38:39:00:02:d1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21294',
+            :libvirt__tunnel_local_port => '30364',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22294',
+            :libvirt__tunnel_port => '31364',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-fc1-1:fp21
@@ -7778,9 +7823,9 @@ end
             :mac => "44:38:39:00:02:a7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21273',
+            :libvirt__tunnel_local_port => '30343',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22273',
+            :libvirt__tunnel_port => '31343',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-fc1-1:fp22
@@ -7788,9 +7833,9 @@ end
             :mac => "44:38:39:00:02:41",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21221',
+            :libvirt__tunnel_local_port => '30291',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22221',
+            :libvirt__tunnel_port => '31291',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-fc1-1:fp23
@@ -7798,9 +7843,9 @@ end
             :mac => "44:38:39:00:03:7f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21382',
+            :libvirt__tunnel_local_port => '30452',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22382',
+            :libvirt__tunnel_port => '31452',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-fc2-1:fp20
@@ -7808,9 +7853,9 @@ end
             :mac => "44:38:39:00:02:d3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21295',
+            :libvirt__tunnel_local_port => '30365',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22295',
+            :libvirt__tunnel_port => '31365',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-fc2-1:fp21
@@ -7818,9 +7863,9 @@ end
             :mac => "44:38:39:00:01:d4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21166',
+            :libvirt__tunnel_local_port => '30236',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22166',
+            :libvirt__tunnel_port => '31236',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-fc2-1:fp22
@@ -7828,9 +7873,9 @@ end
             :mac => "44:38:39:00:04:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21448',
+            :libvirt__tunnel_local_port => '30518',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22448',
+            :libvirt__tunnel_port => '31518',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-fc2-1:fp23
@@ -7838,9 +7883,9 @@ end
             :mac => "44:38:39:00:02:dd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21300',
+            :libvirt__tunnel_local_port => '30370',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22300',
+            :libvirt__tunnel_port => '31370',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-fc3-1:fp20
@@ -7848,9 +7893,9 @@ end
             :mac => "44:38:39:00:02:bf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21285',
+            :libvirt__tunnel_local_port => '30355',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22285',
+            :libvirt__tunnel_port => '31355',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-fc3-1:fp21
@@ -7858,9 +7903,9 @@ end
             :mac => "44:38:39:00:02:10",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21196',
+            :libvirt__tunnel_local_port => '30266',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22196',
+            :libvirt__tunnel_port => '31266',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-fc3-1:fp22
@@ -7868,9 +7913,9 @@ end
             :mac => "44:38:39:00:01:a0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21140',
+            :libvirt__tunnel_local_port => '30210',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22140',
+            :libvirt__tunnel_port => '31210',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-fc3-1:fp23
@@ -7878,9 +7923,9 @@ end
             :mac => "44:38:39:00:02:31",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21213',
+            :libvirt__tunnel_local_port => '30283',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22213',
+            :libvirt__tunnel_port => '31283',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-fc4-1:fp20
@@ -7888,9 +7933,9 @@ end
             :mac => "44:38:39:00:02:ab",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21275',
+            :libvirt__tunnel_local_port => '30345',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22275',
+            :libvirt__tunnel_port => '31345',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-fc4-1:fp21
@@ -7898,9 +7943,9 @@ end
             :mac => "44:38:39:00:00:1f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20946',
+            :libvirt__tunnel_local_port => '30016',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21946',
+            :libvirt__tunnel_port => '31016',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-fc4-1:fp22
@@ -7908,9 +7953,9 @@ end
             :mac => "44:38:39:00:01:56",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21103',
+            :libvirt__tunnel_local_port => '30173',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22103',
+            :libvirt__tunnel_port => '31173',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-fc4-1:fp23
@@ -7918,9 +7963,9 @@ end
             :mac => "44:38:39:00:04:42",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21481',
+            :libvirt__tunnel_local_port => '30551',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22481',
+            :libvirt__tunnel_port => '31551',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp6 --> leaf06:swp54
@@ -7928,9 +7973,9 @@ end
             :mac => "44:38:39:00:03:7a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22379',
+            :libvirt__tunnel_local_port => '31449',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21379',
+            :libvirt__tunnel_port => '30449',
             :libvirt__iface_name => 'swp6',
             auto_config: false
 
@@ -8029,7 +8074,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:7a --> swp6"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:7a", NAME="swp6", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -8045,9 +8090,9 @@ end
 
   ##### DEFINE VM for chassis03-lc1-2 #####
   config.vm.define "chassis03-lc1-2" do |device|
-
-    device.vm.hostname = "chassis03-lc1-2"
-
+    
+    device.vm.hostname = "chassis03-lc1-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -8065,9 +8110,9 @@ end
             :mac => "44:38:39:00:04:7a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22510',
+            :libvirt__tunnel_local_port => '31580',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21510',
+            :libvirt__tunnel_port => '30580',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-fc1-1:fp4
@@ -8075,9 +8120,9 @@ end
             :mac => "44:38:39:00:02:2f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21212',
+            :libvirt__tunnel_local_port => '30282',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22212',
+            :libvirt__tunnel_port => '31282',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-fc1-1:fp5
@@ -8085,9 +8130,9 @@ end
             :mac => "44:38:39:00:02:85",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21256',
+            :libvirt__tunnel_local_port => '30326',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22256',
+            :libvirt__tunnel_port => '31326',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-fc1-1:fp6
@@ -8095,9 +8140,9 @@ end
             :mac => "44:38:39:00:01:a4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21142',
+            :libvirt__tunnel_local_port => '30212',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22142',
+            :libvirt__tunnel_port => '31212',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-fc1-1:fp7
@@ -8105,9 +8150,9 @@ end
             :mac => "44:38:39:00:00:07",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20934',
+            :libvirt__tunnel_local_port => '30004',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21934',
+            :libvirt__tunnel_port => '31004',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-fc2-1:fp4
@@ -8115,9 +8160,9 @@ end
             :mac => "44:38:39:00:00:de",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21043',
+            :libvirt__tunnel_local_port => '30113',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22043',
+            :libvirt__tunnel_port => '31113',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-fc2-1:fp5
@@ -8125,9 +8170,9 @@ end
             :mac => "44:38:39:00:03:8b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21388',
+            :libvirt__tunnel_local_port => '30458',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22388',
+            :libvirt__tunnel_port => '31458',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-fc2-1:fp6
@@ -8135,9 +8180,9 @@ end
             :mac => "44:38:39:00:00:27",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20950',
+            :libvirt__tunnel_local_port => '30020',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21950',
+            :libvirt__tunnel_port => '31020',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-fc2-1:fp7
@@ -8145,9 +8190,9 @@ end
             :mac => "44:38:39:00:03:35",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21344',
+            :libvirt__tunnel_local_port => '30414',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22344',
+            :libvirt__tunnel_port => '31414',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-fc3-1:fp4
@@ -8155,9 +8200,9 @@ end
             :mac => "44:38:39:00:02:d5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21296',
+            :libvirt__tunnel_local_port => '30366',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22296',
+            :libvirt__tunnel_port => '31366',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-fc3-1:fp5
@@ -8165,9 +8210,9 @@ end
             :mac => "44:38:39:00:03:e2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21432',
+            :libvirt__tunnel_local_port => '30502',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22432',
+            :libvirt__tunnel_port => '31502',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-fc3-1:fp6
@@ -8175,9 +8220,9 @@ end
             :mac => "44:38:39:00:04:15",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21458',
+            :libvirt__tunnel_local_port => '30528',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22458',
+            :libvirt__tunnel_port => '31528',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-fc3-1:fp7
@@ -8185,9 +8230,9 @@ end
             :mac => "44:38:39:00:03:03",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21319',
+            :libvirt__tunnel_local_port => '30389',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22319',
+            :libvirt__tunnel_port => '31389',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-fc4-1:fp4
@@ -8195,9 +8240,9 @@ end
             :mac => "44:38:39:00:02:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21189',
+            :libvirt__tunnel_local_port => '30259',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22189',
+            :libvirt__tunnel_port => '31259',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-fc4-1:fp5
@@ -8205,9 +8250,9 @@ end
             :mac => "44:38:39:00:02:79",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21250',
+            :libvirt__tunnel_local_port => '30320',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22250',
+            :libvirt__tunnel_port => '31320',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-fc4-1:fp6
@@ -8215,9 +8260,9 @@ end
             :mac => "44:38:39:00:02:35",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21215',
+            :libvirt__tunnel_local_port => '30285',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22215',
+            :libvirt__tunnel_port => '31285',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-fc4-1:fp7
@@ -8225,9 +8270,9 @@ end
             :mac => "44:38:39:00:00:c6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21031',
+            :libvirt__tunnel_local_port => '30101',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22031',
+            :libvirt__tunnel_port => '31101',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp2 --> leaf02:swp53
@@ -8235,9 +8280,9 @@ end
             :mac => "44:38:39:00:02:6f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22244',
+            :libvirt__tunnel_local_port => '31314',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21244',
+            :libvirt__tunnel_port => '30314',
             :libvirt__iface_name => 'swp2',
             auto_config: false
 
@@ -8336,7 +8381,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:6f --> swp2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:6f", NAME="swp2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -8352,9 +8397,9 @@ end
 
   ##### DEFINE VM for chassis01-fc3-1 #####
   config.vm.define "chassis01-fc3-1" do |device|
-
-    device.vm.hostname = "chassis01-fc3-1"
-
+    
+    device.vm.hostname = "chassis01-fc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -8372,9 +8417,9 @@ end
             :mac => "44:38:39:00:04:7c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22511',
+            :libvirt__tunnel_local_port => '31581',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21511',
+            :libvirt__tunnel_port => '30581',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-lc1-1:fp8
@@ -8382,9 +8427,9 @@ end
             :mac => "44:38:39:00:03:43",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22351',
+            :libvirt__tunnel_local_port => '31421',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21351',
+            :libvirt__tunnel_port => '30421',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-lc1-1:fp9
@@ -8392,9 +8437,9 @@ end
             :mac => "44:38:39:00:04:1f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22463',
+            :libvirt__tunnel_local_port => '31533',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21463',
+            :libvirt__tunnel_port => '30533',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-lc1-1:fp10
@@ -8402,9 +8447,9 @@ end
             :mac => "44:38:39:00:03:0c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22323',
+            :libvirt__tunnel_local_port => '31393',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21323',
+            :libvirt__tunnel_port => '30393',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-lc1-1:fp11
@@ -8412,9 +8457,9 @@ end
             :mac => "44:38:39:00:03:ec",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22437',
+            :libvirt__tunnel_local_port => '31507',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21437',
+            :libvirt__tunnel_port => '30507',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-lc1-2:fp8
@@ -8422,9 +8467,9 @@ end
             :mac => "44:38:39:00:00:9e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22010',
+            :libvirt__tunnel_local_port => '31080',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21010',
+            :libvirt__tunnel_port => '30080',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-lc1-2:fp9
@@ -8432,9 +8477,9 @@ end
             :mac => "44:38:39:00:01:c9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22160',
+            :libvirt__tunnel_local_port => '31230',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21160',
+            :libvirt__tunnel_port => '30230',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-lc1-2:fp10
@@ -8442,9 +8487,9 @@ end
             :mac => "44:38:39:00:01:5d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22106',
+            :libvirt__tunnel_local_port => '31176',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21106',
+            :libvirt__tunnel_port => '30176',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-lc1-2:fp11
@@ -8452,9 +8497,9 @@ end
             :mac => "44:38:39:00:01:9b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22137',
+            :libvirt__tunnel_local_port => '31207',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21137',
+            :libvirt__tunnel_port => '30207',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-lc2-1:fp8
@@ -8462,9 +8507,9 @@ end
             :mac => "44:38:39:00:00:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21931',
+            :libvirt__tunnel_local_port => '31001',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20931',
+            :libvirt__tunnel_port => '30001',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-lc2-1:fp9
@@ -8472,9 +8517,9 @@ end
             :mac => "44:38:39:00:03:9e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22397',
+            :libvirt__tunnel_local_port => '31467',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21397',
+            :libvirt__tunnel_port => '30467',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-lc2-1:fp10
@@ -8482,9 +8527,9 @@ end
             :mac => "44:38:39:00:01:cd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22162',
+            :libvirt__tunnel_local_port => '31232',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21162',
+            :libvirt__tunnel_port => '30232',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-lc2-1:fp11
@@ -8492,9 +8537,9 @@ end
             :mac => "44:38:39:00:03:59",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22362',
+            :libvirt__tunnel_local_port => '31432',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21362',
+            :libvirt__tunnel_port => '30432',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-lc2-2:fp8
@@ -8502,9 +8547,9 @@ end
             :mac => "44:38:39:00:01:eb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22177',
+            :libvirt__tunnel_local_port => '31247',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21177',
+            :libvirt__tunnel_port => '30247',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-lc2-2:fp9
@@ -8512,9 +8557,9 @@ end
             :mac => "44:38:39:00:00:1a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21943',
+            :libvirt__tunnel_local_port => '31013',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20943',
+            :libvirt__tunnel_port => '30013',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-lc2-2:fp10
@@ -8522,9 +8567,9 @@ end
             :mac => "44:38:39:00:00:3f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21962',
+            :libvirt__tunnel_local_port => '31032',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20962',
+            :libvirt__tunnel_port => '30032',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-lc2-2:fp11
@@ -8532,9 +8577,9 @@ end
             :mac => "44:38:39:00:03:7c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22380',
+            :libvirt__tunnel_local_port => '31450',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21380',
+            :libvirt__tunnel_port => '30450',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis01-lc3-1:fp8
@@ -8542,9 +8587,9 @@ end
             :mac => "44:38:39:00:00:30",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21954',
+            :libvirt__tunnel_local_port => '31024',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20954',
+            :libvirt__tunnel_port => '30024',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis01-lc3-1:fp9
@@ -8552,9 +8597,9 @@ end
             :mac => "44:38:39:00:00:3b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21960',
+            :libvirt__tunnel_local_port => '31030',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20960',
+            :libvirt__tunnel_port => '30030',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis01-lc3-1:fp10
@@ -8562,9 +8607,9 @@ end
             :mac => "44:38:39:00:03:72",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22375',
+            :libvirt__tunnel_local_port => '31445',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21375',
+            :libvirt__tunnel_port => '30445',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis01-lc3-1:fp11
@@ -8572,9 +8617,9 @@ end
             :mac => "44:38:39:00:02:a0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22269',
+            :libvirt__tunnel_local_port => '31339',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21269',
+            :libvirt__tunnel_port => '30339',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis01-lc3-2:fp8
@@ -8582,9 +8627,9 @@ end
             :mac => "44:38:39:00:01:75",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22118',
+            :libvirt__tunnel_local_port => '31188',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21118',
+            :libvirt__tunnel_port => '30188',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis01-lc3-2:fp9
@@ -8592,9 +8637,9 @@ end
             :mac => "44:38:39:00:02:71",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22245',
+            :libvirt__tunnel_local_port => '31315',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21245',
+            :libvirt__tunnel_port => '30315',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis01-lc3-2:fp10
@@ -8602,9 +8647,9 @@ end
             :mac => "44:38:39:00:02:8a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22258',
+            :libvirt__tunnel_local_port => '31328',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21258',
+            :libvirt__tunnel_port => '30328',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis01-lc3-2:fp11
@@ -8612,9 +8657,9 @@ end
             :mac => "44:38:39:00:01:e3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22173',
+            :libvirt__tunnel_local_port => '31243',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21173',
+            :libvirt__tunnel_port => '30243',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis01-lc4-1:fp8
@@ -8622,9 +8667,9 @@ end
             :mac => "44:38:39:00:00:f1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22052',
+            :libvirt__tunnel_local_port => '31122',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21052',
+            :libvirt__tunnel_port => '30122',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis01-lc4-1:fp9
@@ -8632,9 +8677,9 @@ end
             :mac => "44:38:39:00:01:07",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22063',
+            :libvirt__tunnel_local_port => '31133',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21063',
+            :libvirt__tunnel_port => '30133',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis01-lc4-1:fp10
@@ -8642,9 +8687,9 @@ end
             :mac => "44:38:39:00:01:cf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22163',
+            :libvirt__tunnel_local_port => '31233',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21163',
+            :libvirt__tunnel_port => '30233',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis01-lc4-1:fp11
@@ -8652,9 +8697,9 @@ end
             :mac => "44:38:39:00:01:fd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22186',
+            :libvirt__tunnel_local_port => '31256',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21186',
+            :libvirt__tunnel_port => '30256',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis01-lc4-2:fp8
@@ -8662,9 +8707,9 @@ end
             :mac => "44:38:39:00:01:43",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22093',
+            :libvirt__tunnel_local_port => '31163',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21093',
+            :libvirt__tunnel_port => '30163',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis01-lc4-2:fp9
@@ -8672,9 +8717,9 @@ end
             :mac => "44:38:39:00:01:4f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22099',
+            :libvirt__tunnel_local_port => '31169',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21099',
+            :libvirt__tunnel_port => '30169',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis01-lc4-2:fp10
@@ -8682,9 +8727,9 @@ end
             :mac => "44:38:39:00:00:d1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22036',
+            :libvirt__tunnel_local_port => '31106',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21036',
+            :libvirt__tunnel_port => '30106',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis01-lc4-2:fp11
@@ -8692,9 +8737,9 @@ end
             :mac => "44:38:39:00:02:1f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22203',
+            :libvirt__tunnel_local_port => '31273',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21203',
+            :libvirt__tunnel_port => '30273',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -8853,7 +8898,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:1f --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:1f", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -8869,9 +8914,9 @@ end
 
   ##### DEFINE VM for chassis02-lc4-1 #####
   config.vm.define "chassis02-lc4-1" do |device|
-
-    device.vm.hostname = "chassis02-lc4-1"
-
+    
+    device.vm.hostname = "chassis02-lc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -8889,9 +8934,9 @@ end
             :mac => "44:38:39:00:04:7e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22512',
+            :libvirt__tunnel_local_port => '31582',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21512',
+            :libvirt__tunnel_port => '30582',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-fc1-1:fp24
@@ -8899,9 +8944,9 @@ end
             :mac => "44:38:39:00:00:7b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20993',
+            :libvirt__tunnel_local_port => '30063',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21993',
+            :libvirt__tunnel_port => '31063',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-fc1-1:fp25
@@ -8909,9 +8954,9 @@ end
             :mac => "44:38:39:00:00:53",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20973',
+            :libvirt__tunnel_local_port => '30043',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21973',
+            :libvirt__tunnel_port => '31043',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-fc1-1:fp26
@@ -8919,9 +8964,9 @@ end
             :mac => "44:38:39:00:02:29",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21209',
+            :libvirt__tunnel_local_port => '30279',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22209',
+            :libvirt__tunnel_port => '31279',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-fc1-1:fp27
@@ -8929,9 +8974,9 @@ end
             :mac => "44:38:39:00:02:99",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21266',
+            :libvirt__tunnel_local_port => '30336',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22266',
+            :libvirt__tunnel_port => '31336',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-fc2-1:fp24
@@ -8939,9 +8984,9 @@ end
             :mac => "44:38:39:00:02:cb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21291',
+            :libvirt__tunnel_local_port => '30361',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22291',
+            :libvirt__tunnel_port => '31361',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-fc2-1:fp25
@@ -8949,9 +8994,9 @@ end
             :mac => "44:38:39:00:01:ec",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21178',
+            :libvirt__tunnel_local_port => '30248',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22178',
+            :libvirt__tunnel_port => '31248',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-fc2-1:fp26
@@ -8959,9 +9004,9 @@ end
             :mac => "44:38:39:00:02:83",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21255',
+            :libvirt__tunnel_local_port => '30325',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22255',
+            :libvirt__tunnel_port => '31325',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-fc2-1:fp27
@@ -8969,9 +9014,9 @@ end
             :mac => "44:38:39:00:00:b2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21021',
+            :libvirt__tunnel_local_port => '30091',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22021',
+            :libvirt__tunnel_port => '31091',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-fc3-1:fp24
@@ -8979,9 +9024,9 @@ end
             :mac => "44:38:39:00:03:54",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21360',
+            :libvirt__tunnel_local_port => '30430',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22360',
+            :libvirt__tunnel_port => '31430',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-fc3-1:fp25
@@ -8989,9 +9034,9 @@ end
             :mac => "44:38:39:00:03:e8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21435',
+            :libvirt__tunnel_local_port => '30505',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22435',
+            :libvirt__tunnel_port => '31505',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-fc3-1:fp26
@@ -8999,9 +9044,9 @@ end
             :mac => "44:38:39:00:03:9b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21396',
+            :libvirt__tunnel_local_port => '30466',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22396',
+            :libvirt__tunnel_port => '31466',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-fc3-1:fp27
@@ -9009,9 +9054,9 @@ end
             :mac => "44:38:39:00:03:b5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21409',
+            :libvirt__tunnel_local_port => '30479',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22409',
+            :libvirt__tunnel_port => '31479',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-fc4-1:fp24
@@ -9019,9 +9064,9 @@ end
             :mac => "44:38:39:00:02:00",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21188',
+            :libvirt__tunnel_local_port => '30258',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22188',
+            :libvirt__tunnel_port => '31258',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-fc4-1:fp25
@@ -9029,9 +9074,9 @@ end
             :mac => "44:38:39:00:03:7d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21381',
+            :libvirt__tunnel_local_port => '30451',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22381',
+            :libvirt__tunnel_port => '31451',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-fc4-1:fp26
@@ -9039,9 +9084,9 @@ end
             :mac => "44:38:39:00:02:3d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21219',
+            :libvirt__tunnel_local_port => '30289',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22219',
+            :libvirt__tunnel_port => '31289',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-fc4-1:fp27
@@ -9049,9 +9094,9 @@ end
             :mac => "44:38:39:00:00:55",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20974',
+            :libvirt__tunnel_local_port => '30044',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21974',
+            :libvirt__tunnel_port => '31044',
             :libvirt__iface_name => 'fp15',
             auto_config: false
 
@@ -9146,7 +9191,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:55 --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:55", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -9162,9 +9207,9 @@ end
 
   ##### DEFINE VM for chassis02-lc4-2 #####
   config.vm.define "chassis02-lc4-2" do |device|
-
-    device.vm.hostname = "chassis02-lc4-2"
-
+    
+    device.vm.hostname = "chassis02-lc4-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -9182,9 +9227,9 @@ end
             :mac => "44:38:39:00:04:80",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22513',
+            :libvirt__tunnel_local_port => '31583',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21513',
+            :libvirt__tunnel_port => '30583',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-fc1-1:fp28
@@ -9192,9 +9237,9 @@ end
             :mac => "44:38:39:00:02:06",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21191',
+            :libvirt__tunnel_local_port => '30261',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22191',
+            :libvirt__tunnel_port => '31261',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-fc1-1:fp29
@@ -9202,9 +9247,9 @@ end
             :mac => "44:38:39:00:00:dc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21042',
+            :libvirt__tunnel_local_port => '30112',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22042',
+            :libvirt__tunnel_port => '31112',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-fc1-1:fp30
@@ -9212,9 +9257,9 @@ end
             :mac => "44:38:39:00:00:ee",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21051',
+            :libvirt__tunnel_local_port => '30121',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22051',
+            :libvirt__tunnel_port => '31121',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-fc1-1:fp31
@@ -9222,9 +9267,9 @@ end
             :mac => "44:38:39:00:01:1e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21075',
+            :libvirt__tunnel_local_port => '30145',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22075',
+            :libvirt__tunnel_port => '31145',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-fc2-1:fp28
@@ -9232,9 +9277,9 @@ end
             :mac => "44:38:39:00:00:ac",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21018',
+            :libvirt__tunnel_local_port => '30088',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22018',
+            :libvirt__tunnel_port => '31088',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-fc2-1:fp29
@@ -9242,9 +9287,9 @@ end
             :mac => "44:38:39:00:03:85",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21385',
+            :libvirt__tunnel_local_port => '30455',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22385',
+            :libvirt__tunnel_port => '31455',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-fc2-1:fp30
@@ -9252,9 +9297,9 @@ end
             :mac => "44:38:39:00:00:a7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21015',
+            :libvirt__tunnel_local_port => '30085',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22015',
+            :libvirt__tunnel_port => '31085',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-fc2-1:fp31
@@ -9262,9 +9307,9 @@ end
             :mac => "44:38:39:00:01:5a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21105',
+            :libvirt__tunnel_local_port => '30175',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22105',
+            :libvirt__tunnel_port => '31175',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-fc3-1:fp28
@@ -9272,9 +9317,9 @@ end
             :mac => "44:38:39:00:02:cf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21293',
+            :libvirt__tunnel_local_port => '30363',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22293',
+            :libvirt__tunnel_port => '31363',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-fc3-1:fp29
@@ -9282,9 +9327,9 @@ end
             :mac => "44:38:39:00:01:92",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21133',
+            :libvirt__tunnel_local_port => '30203',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22133',
+            :libvirt__tunnel_port => '31203',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-fc3-1:fp30
@@ -9292,9 +9337,9 @@ end
             :mac => "44:38:39:00:03:3e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21349',
+            :libvirt__tunnel_local_port => '30419',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22349',
+            :libvirt__tunnel_port => '31419',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-fc3-1:fp31
@@ -9302,9 +9347,9 @@ end
             :mac => "44:38:39:00:01:36",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21087',
+            :libvirt__tunnel_local_port => '30157',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22087',
+            :libvirt__tunnel_port => '31157',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-fc4-1:fp28
@@ -9312,9 +9357,9 @@ end
             :mac => "44:38:39:00:01:82",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21125',
+            :libvirt__tunnel_local_port => '30195',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22125',
+            :libvirt__tunnel_port => '31195',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-fc4-1:fp29
@@ -9322,9 +9367,9 @@ end
             :mac => "44:38:39:00:03:07",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21321',
+            :libvirt__tunnel_local_port => '30391',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22321',
+            :libvirt__tunnel_port => '31391',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-fc4-1:fp30
@@ -9332,9 +9377,9 @@ end
             :mac => "44:38:39:00:03:3c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21348',
+            :libvirt__tunnel_local_port => '30418',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22348',
+            :libvirt__tunnel_port => '31418',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-fc4-1:fp31
@@ -9342,9 +9387,9 @@ end
             :mac => "44:38:39:00:01:44",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21094',
+            :libvirt__tunnel_local_port => '30164',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22094',
+            :libvirt__tunnel_port => '31164',
             :libvirt__iface_name => 'fp15',
             auto_config: false
 
@@ -9439,7 +9484,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:44 --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:44", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -9455,9 +9500,9 @@ end
 
   ##### DEFINE VM for chassis03-lc3-2 #####
   config.vm.define "chassis03-lc3-2" do |device|
-
-    device.vm.hostname = "chassis03-lc3-2"
-
+    
+    device.vm.hostname = "chassis03-lc3-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -9475,9 +9520,9 @@ end
             :mac => "44:38:39:00:04:84",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22515',
+            :libvirt__tunnel_local_port => '31585',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21515',
+            :libvirt__tunnel_port => '30585',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-fc1-1:fp20
@@ -9485,9 +9530,9 @@ end
             :mac => "44:38:39:00:02:db",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21299',
+            :libvirt__tunnel_local_port => '30369',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22299',
+            :libvirt__tunnel_port => '31369',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-fc1-1:fp21
@@ -9495,9 +9540,9 @@ end
             :mac => "44:38:39:00:03:6b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21372',
+            :libvirt__tunnel_local_port => '30442',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22372',
+            :libvirt__tunnel_port => '31442',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-fc1-1:fp22
@@ -9505,9 +9550,9 @@ end
             :mac => "44:38:39:00:01:9e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21139',
+            :libvirt__tunnel_local_port => '30209',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22139',
+            :libvirt__tunnel_port => '31209',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-fc1-1:fp23
@@ -9515,9 +9560,9 @@ end
             :mac => "44:38:39:00:00:79",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20992',
+            :libvirt__tunnel_local_port => '30062',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21992',
+            :libvirt__tunnel_port => '31062',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-fc2-1:fp20
@@ -9525,9 +9570,9 @@ end
             :mac => "44:38:39:00:00:d4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21038',
+            :libvirt__tunnel_local_port => '30108',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22038',
+            :libvirt__tunnel_port => '31108',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-fc2-1:fp21
@@ -9535,9 +9580,9 @@ end
             :mac => "44:38:39:00:02:62",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21238',
+            :libvirt__tunnel_local_port => '30308',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22238',
+            :libvirt__tunnel_port => '31308',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-fc2-1:fp22
@@ -9545,9 +9590,9 @@ end
             :mac => "44:38:39:00:02:93",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21263',
+            :libvirt__tunnel_local_port => '30333',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22263',
+            :libvirt__tunnel_port => '31333',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-fc2-1:fp23
@@ -9555,9 +9600,9 @@ end
             :mac => "44:38:39:00:01:d8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21168',
+            :libvirt__tunnel_local_port => '30238',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22168',
+            :libvirt__tunnel_port => '31238',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-fc3-1:fp20
@@ -9565,9 +9610,9 @@ end
             :mac => "44:38:39:00:03:48",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21354',
+            :libvirt__tunnel_local_port => '30424',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22354',
+            :libvirt__tunnel_port => '31424',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-fc3-1:fp21
@@ -9575,9 +9620,9 @@ end
             :mac => "44:38:39:00:02:60",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21237',
+            :libvirt__tunnel_local_port => '30307',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22237',
+            :libvirt__tunnel_port => '31307',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-fc3-1:fp22
@@ -9585,9 +9630,9 @@ end
             :mac => "44:38:39:00:01:e4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21174',
+            :libvirt__tunnel_local_port => '30244',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22174',
+            :libvirt__tunnel_port => '31244',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-fc3-1:fp23
@@ -9595,9 +9640,9 @@ end
             :mac => "44:38:39:00:02:5e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21236',
+            :libvirt__tunnel_local_port => '30306',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22236',
+            :libvirt__tunnel_port => '31306',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-fc4-1:fp20
@@ -9605,9 +9650,9 @@ end
             :mac => "44:38:39:00:00:c0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21028',
+            :libvirt__tunnel_local_port => '30098',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22028',
+            :libvirt__tunnel_port => '31098',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-fc4-1:fp21
@@ -9615,9 +9660,9 @@ end
             :mac => "44:38:39:00:01:64",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21110',
+            :libvirt__tunnel_local_port => '30180',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22110',
+            :libvirt__tunnel_port => '31180',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-fc4-1:fp22
@@ -9625,9 +9670,9 @@ end
             :mac => "44:38:39:00:03:bd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21413',
+            :libvirt__tunnel_local_port => '30483',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22413',
+            :libvirt__tunnel_port => '31483',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-fc4-1:fp23
@@ -9635,9 +9680,9 @@ end
             :mac => "44:38:39:00:00:21",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20947',
+            :libvirt__tunnel_local_port => '30017',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21947',
+            :libvirt__tunnel_port => '31017',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp6 --> leaf06:swp53
@@ -9645,9 +9690,9 @@ end
             :mac => "44:38:39:00:03:f4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22441',
+            :libvirt__tunnel_local_port => '31511',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21441',
+            :libvirt__tunnel_port => '30511',
             :libvirt__iface_name => 'swp6',
             auto_config: false
 
@@ -9746,7 +9791,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:f4 --> swp6"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:f4", NAME="swp6", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -9762,9 +9807,9 @@ end
 
   ##### DEFINE VM for chassis04-fc3-1 #####
   config.vm.define "chassis04-fc3-1" do |device|
-
-    device.vm.hostname = "chassis04-fc3-1"
-
+    
+    device.vm.hostname = "chassis04-fc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -9782,9 +9827,9 @@ end
             :mac => "44:38:39:00:04:86",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22516',
+            :libvirt__tunnel_local_port => '31586',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21516',
+            :libvirt__tunnel_port => '30586',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-lc1-1:fp8
@@ -9792,9 +9837,9 @@ end
             :mac => "44:38:39:00:04:04",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22449',
+            :libvirt__tunnel_local_port => '31519',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21449',
+            :libvirt__tunnel_port => '30519',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-lc1-1:fp9
@@ -9802,9 +9847,9 @@ end
             :mac => "44:38:39:00:04:2f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22471',
+            :libvirt__tunnel_local_port => '31541',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21471',
+            :libvirt__tunnel_port => '30541',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-lc1-1:fp10
@@ -9812,9 +9857,9 @@ end
             :mac => "44:38:39:00:02:4e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22227',
+            :libvirt__tunnel_local_port => '31297',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21227',
+            :libvirt__tunnel_port => '30297',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-lc1-1:fp11
@@ -9822,9 +9867,9 @@ end
             :mac => "44:38:39:00:01:b3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22149',
+            :libvirt__tunnel_local_port => '31219',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21149',
+            :libvirt__tunnel_port => '30219',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-lc1-2:fp8
@@ -9832,9 +9877,9 @@ end
             :mac => "44:38:39:00:03:30",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22341',
+            :libvirt__tunnel_local_port => '31411',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21341',
+            :libvirt__tunnel_port => '30411',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-lc1-2:fp9
@@ -9842,9 +9887,9 @@ end
             :mac => "44:38:39:00:04:46",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22483',
+            :libvirt__tunnel_local_port => '31553',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21483',
+            :libvirt__tunnel_port => '30553',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-lc1-2:fp10
@@ -9852,9 +9897,9 @@ end
             :mac => "44:38:39:00:01:41",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22092',
+            :libvirt__tunnel_local_port => '31162',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21092',
+            :libvirt__tunnel_port => '30162',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-lc1-2:fp11
@@ -9862,9 +9907,9 @@ end
             :mac => "44:38:39:00:03:8a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22387',
+            :libvirt__tunnel_local_port => '31457',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21387',
+            :libvirt__tunnel_port => '30457',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-lc2-1:fp8
@@ -9872,9 +9917,9 @@ end
             :mac => "44:38:39:00:01:2d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22082',
+            :libvirt__tunnel_local_port => '31152',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21082',
+            :libvirt__tunnel_port => '30152',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-lc2-1:fp9
@@ -9882,9 +9927,9 @@ end
             :mac => "44:38:39:00:03:bc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22412',
+            :libvirt__tunnel_local_port => '31482',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21412',
+            :libvirt__tunnel_port => '30482',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-lc2-1:fp10
@@ -9892,9 +9937,9 @@ end
             :mac => "44:38:39:00:03:1c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22331',
+            :libvirt__tunnel_local_port => '31401',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21331',
+            :libvirt__tunnel_port => '30401',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-lc2-1:fp11
@@ -9902,9 +9947,9 @@ end
             :mac => "44:38:39:00:01:59",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22104',
+            :libvirt__tunnel_local_port => '31174',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21104',
+            :libvirt__tunnel_port => '30174',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-lc2-2:fp8
@@ -9912,9 +9957,9 @@ end
             :mac => "44:38:39:00:00:2c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21952',
+            :libvirt__tunnel_local_port => '31022',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20952',
+            :libvirt__tunnel_port => '30022',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-lc2-2:fp9
@@ -9922,9 +9967,9 @@ end
             :mac => "44:38:39:00:02:b0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22277',
+            :libvirt__tunnel_local_port => '31347',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21277',
+            :libvirt__tunnel_port => '30347',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-lc2-2:fp10
@@ -9932,9 +9977,9 @@ end
             :mac => "44:38:39:00:01:6d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22114',
+            :libvirt__tunnel_local_port => '31184',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21114',
+            :libvirt__tunnel_port => '30184',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-lc2-2:fp11
@@ -9942,9 +9987,9 @@ end
             :mac => "44:38:39:00:00:a6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22014',
+            :libvirt__tunnel_local_port => '31084',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21014',
+            :libvirt__tunnel_port => '30084',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis04-lc3-1:fp8
@@ -9952,9 +9997,9 @@ end
             :mac => "44:38:39:00:03:8e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22389',
+            :libvirt__tunnel_local_port => '31459',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21389',
+            :libvirt__tunnel_port => '30459',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis04-lc3-1:fp9
@@ -9962,9 +10007,9 @@ end
             :mac => "44:38:39:00:01:dd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22170',
+            :libvirt__tunnel_local_port => '31240',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21170',
+            :libvirt__tunnel_port => '30240',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis04-lc3-1:fp10
@@ -9972,9 +10017,9 @@ end
             :mac => "44:38:39:00:03:d0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22422',
+            :libvirt__tunnel_local_port => '31492',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21422',
+            :libvirt__tunnel_port => '30492',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis04-lc3-1:fp11
@@ -9982,9 +10027,9 @@ end
             :mac => "44:38:39:00:00:47",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21966',
+            :libvirt__tunnel_local_port => '31036',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20966',
+            :libvirt__tunnel_port => '30036',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis04-lc3-2:fp8
@@ -9992,9 +10037,9 @@ end
             :mac => "44:38:39:00:02:c0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22285',
+            :libvirt__tunnel_local_port => '31355',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21285',
+            :libvirt__tunnel_port => '30355',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis04-lc3-2:fp9
@@ -10002,9 +10047,9 @@ end
             :mac => "44:38:39:00:02:11",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22196',
+            :libvirt__tunnel_local_port => '31266',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21196',
+            :libvirt__tunnel_port => '30266',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis04-lc3-2:fp10
@@ -10012,9 +10057,9 @@ end
             :mac => "44:38:39:00:01:a1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22140',
+            :libvirt__tunnel_local_port => '31210',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21140',
+            :libvirt__tunnel_port => '30210',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis04-lc3-2:fp11
@@ -10022,9 +10067,9 @@ end
             :mac => "44:38:39:00:02:32",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22213',
+            :libvirt__tunnel_local_port => '31283',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21213',
+            :libvirt__tunnel_port => '30283',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis04-lc4-1:fp8
@@ -10032,9 +10077,9 @@ end
             :mac => "44:38:39:00:02:54",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22230',
+            :libvirt__tunnel_local_port => '31300',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21230',
+            :libvirt__tunnel_port => '30300',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis04-lc4-1:fp9
@@ -10042,9 +10087,9 @@ end
             :mac => "44:38:39:00:02:19",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22200',
+            :libvirt__tunnel_local_port => '31270',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21200',
+            :libvirt__tunnel_port => '30270',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis04-lc4-1:fp10
@@ -10052,9 +10097,9 @@ end
             :mac => "44:38:39:00:03:e1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22431',
+            :libvirt__tunnel_local_port => '31501',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21431',
+            :libvirt__tunnel_port => '30501',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis04-lc4-1:fp11
@@ -10062,9 +10107,9 @@ end
             :mac => "44:38:39:00:00:ed",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22050',
+            :libvirt__tunnel_local_port => '31120',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21050',
+            :libvirt__tunnel_port => '30120',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis04-lc4-2:fp8
@@ -10072,9 +10117,9 @@ end
             :mac => "44:38:39:00:00:16",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21941',
+            :libvirt__tunnel_local_port => '31011',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20941',
+            :libvirt__tunnel_port => '30011',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis04-lc4-2:fp9
@@ -10082,9 +10127,9 @@ end
             :mac => "44:38:39:00:02:aa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22274',
+            :libvirt__tunnel_local_port => '31344',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21274',
+            :libvirt__tunnel_port => '30344',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis04-lc4-2:fp10
@@ -10092,9 +10137,9 @@ end
             :mac => "44:38:39:00:04:33",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22473',
+            :libvirt__tunnel_local_port => '31543',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21473',
+            :libvirt__tunnel_port => '30543',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis04-lc4-2:fp11
@@ -10102,9 +10147,9 @@ end
             :mac => "44:38:39:00:01:a9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22144',
+            :libvirt__tunnel_local_port => '31214',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21144',
+            :libvirt__tunnel_port => '30214',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -10263,7 +10308,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:a9 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:a9", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -10279,9 +10324,9 @@ end
 
   ##### DEFINE VM for chassis04-lc2-2 #####
   config.vm.define "chassis04-lc2-2" do |device|
-
-    device.vm.hostname = "chassis04-lc2-2"
-
+    
+    device.vm.hostname = "chassis04-lc2-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -10299,9 +10344,9 @@ end
             :mac => "44:38:39:00:04:88",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22517',
+            :libvirt__tunnel_local_port => '31587',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21517',
+            :libvirt__tunnel_port => '30587',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-fc1-1:fp12
@@ -10309,9 +10354,9 @@ end
             :mac => "44:38:39:00:03:f9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21444',
+            :libvirt__tunnel_local_port => '30514',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22444',
+            :libvirt__tunnel_port => '31514',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-fc1-1:fp13
@@ -10319,9 +10364,9 @@ end
             :mac => "44:38:39:00:02:81",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21254',
+            :libvirt__tunnel_local_port => '30324',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22254',
+            :libvirt__tunnel_port => '31324',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-fc1-1:fp14
@@ -10329,9 +10374,9 @@ end
             :mac => "44:38:39:00:04:07",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21451',
+            :libvirt__tunnel_local_port => '30521',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22451',
+            :libvirt__tunnel_port => '31521',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-fc1-1:fp15
@@ -10339,9 +10384,9 @@ end
             :mac => "44:38:39:00:03:cd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21421',
+            :libvirt__tunnel_local_port => '30491',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22421',
+            :libvirt__tunnel_port => '31491',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-fc2-1:fp12
@@ -10349,9 +10394,9 @@ end
             :mac => "44:38:39:00:02:c3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21287',
+            :libvirt__tunnel_local_port => '30357',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22287',
+            :libvirt__tunnel_port => '31357',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-fc2-1:fp13
@@ -10359,9 +10404,9 @@ end
             :mac => "44:38:39:00:01:e8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21176',
+            :libvirt__tunnel_local_port => '30246',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22176',
+            :libvirt__tunnel_port => '31246',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-fc2-1:fp14
@@ -10369,9 +10414,9 @@ end
             :mac => "44:38:39:00:01:70",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21116',
+            :libvirt__tunnel_local_port => '30186',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22116',
+            :libvirt__tunnel_port => '31186',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-fc2-1:fp15
@@ -10379,9 +10424,9 @@ end
             :mac => "44:38:39:00:00:c4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21030',
+            :libvirt__tunnel_local_port => '30100',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22030',
+            :libvirt__tunnel_port => '31100',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-fc3-1:fp12
@@ -10389,9 +10434,9 @@ end
             :mac => "44:38:39:00:00:2b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20952',
+            :libvirt__tunnel_local_port => '30022',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21952',
+            :libvirt__tunnel_port => '31022',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-fc3-1:fp13
@@ -10399,9 +10444,9 @@ end
             :mac => "44:38:39:00:02:af",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21277',
+            :libvirt__tunnel_local_port => '30347',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22277',
+            :libvirt__tunnel_port => '31347',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-fc3-1:fp14
@@ -10409,9 +10454,9 @@ end
             :mac => "44:38:39:00:01:6c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21114',
+            :libvirt__tunnel_local_port => '30184',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22114',
+            :libvirt__tunnel_port => '31184',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-fc3-1:fp15
@@ -10419,9 +10464,9 @@ end
             :mac => "44:38:39:00:00:a5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21014',
+            :libvirt__tunnel_local_port => '30084',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22014',
+            :libvirt__tunnel_port => '31084',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-fc4-1:fp12
@@ -10429,9 +10474,9 @@ end
             :mac => "44:38:39:00:04:0b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21453',
+            :libvirt__tunnel_local_port => '30523',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22453',
+            :libvirt__tunnel_port => '31523',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-fc4-1:fp13
@@ -10439,9 +10484,9 @@ end
             :mac => "44:38:39:00:03:fd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21446',
+            :libvirt__tunnel_local_port => '30516',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22446',
+            :libvirt__tunnel_port => '31516',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-fc4-1:fp14
@@ -10449,9 +10494,9 @@ end
             :mac => "44:38:39:00:01:76",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21119',
+            :libvirt__tunnel_local_port => '30189',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22119',
+            :libvirt__tunnel_port => '31189',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-fc4-1:fp15
@@ -10459,9 +10504,9 @@ end
             :mac => "44:38:39:00:02:c5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21288',
+            :libvirt__tunnel_local_port => '30358',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22288',
+            :libvirt__tunnel_port => '31358',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp4 --> leaf04:swp54
@@ -10469,9 +10514,9 @@ end
             :mac => "44:38:39:00:02:65",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22239',
+            :libvirt__tunnel_local_port => '31309',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21239',
+            :libvirt__tunnel_port => '30309',
             :libvirt__iface_name => 'swp4',
             auto_config: false
 
@@ -10570,7 +10615,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:65 --> swp4"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:65", NAME="swp4", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -10586,9 +10631,9 @@ end
 
   ##### DEFINE VM for chassis01-fc2-1 #####
   config.vm.define "chassis01-fc2-1" do |device|
-
-    device.vm.hostname = "chassis01-fc2-1"
-
+    
+    device.vm.hostname = "chassis01-fc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -10606,9 +10651,9 @@ end
             :mac => "44:38:39:00:04:8a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22518',
+            :libvirt__tunnel_local_port => '31588',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21518',
+            :libvirt__tunnel_port => '30588',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-lc1-1:fp4
@@ -10616,9 +10661,9 @@ end
             :mac => "44:38:39:00:03:b0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22406',
+            :libvirt__tunnel_local_port => '31476',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21406',
+            :libvirt__tunnel_port => '30476',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-lc1-1:fp5
@@ -10626,9 +10671,9 @@ end
             :mac => "44:38:39:00:02:15",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22198',
+            :libvirt__tunnel_local_port => '31268',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21198',
+            :libvirt__tunnel_port => '30268',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-lc1-1:fp6
@@ -10636,9 +10681,9 @@ end
             :mac => "44:38:39:00:02:69",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22241',
+            :libvirt__tunnel_local_port => '31311',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21241',
+            :libvirt__tunnel_port => '30311',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-lc1-1:fp7
@@ -10646,9 +10691,9 @@ end
             :mac => "44:38:39:00:02:28",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22208',
+            :libvirt__tunnel_local_port => '31278',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21208',
+            :libvirt__tunnel_port => '30278',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-lc1-2:fp4
@@ -10656,9 +10701,9 @@ end
             :mac => "44:38:39:00:04:35",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22474',
+            :libvirt__tunnel_local_port => '31544',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21474',
+            :libvirt__tunnel_port => '30544',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-lc1-2:fp5
@@ -10666,9 +10711,9 @@ end
             :mac => "44:38:39:00:04:00",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22447',
+            :libvirt__tunnel_local_port => '31517',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21447',
+            :libvirt__tunnel_port => '30517',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-lc1-2:fp6
@@ -10676,9 +10721,9 @@ end
             :mac => "44:38:39:00:00:e5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22046',
+            :libvirt__tunnel_local_port => '31116',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21046',
+            :libvirt__tunnel_port => '30116',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-lc1-2:fp7
@@ -10686,9 +10731,9 @@ end
             :mac => "44:38:39:00:02:44",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22222',
+            :libvirt__tunnel_local_port => '31292',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21222',
+            :libvirt__tunnel_port => '30292',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-lc2-1:fp4
@@ -10696,9 +10741,9 @@ end
             :mac => "44:38:39:00:02:0d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22194',
+            :libvirt__tunnel_local_port => '31264',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21194',
+            :libvirt__tunnel_port => '30264',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-lc2-1:fp5
@@ -10706,9 +10751,9 @@ end
             :mac => "44:38:39:00:00:0e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21937',
+            :libvirt__tunnel_local_port => '31007',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20937',
+            :libvirt__tunnel_port => '30007',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-lc2-1:fp6
@@ -10716,9 +10761,9 @@ end
             :mac => "44:38:39:00:02:a6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22272',
+            :libvirt__tunnel_local_port => '31342',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21272',
+            :libvirt__tunnel_port => '30342',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-lc2-1:fp7
@@ -10726,9 +10771,9 @@ end
             :mac => "44:38:39:00:03:57",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22361',
+            :libvirt__tunnel_local_port => '31431',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21361',
+            :libvirt__tunnel_port => '30431',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-lc2-2:fp4
@@ -10736,9 +10781,9 @@ end
             :mac => "44:38:39:00:01:e1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22172',
+            :libvirt__tunnel_local_port => '31242',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21172',
+            :libvirt__tunnel_port => '30242',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-lc2-2:fp5
@@ -10746,9 +10791,9 @@ end
             :mac => "44:38:39:00:00:35",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21957',
+            :libvirt__tunnel_local_port => '31027',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20957',
+            :libvirt__tunnel_port => '30027',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-lc2-2:fp6
@@ -10756,9 +10801,9 @@ end
             :mac => "44:38:39:00:01:a3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22141',
+            :libvirt__tunnel_local_port => '31211',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21141',
+            :libvirt__tunnel_port => '30211',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-lc2-2:fp7
@@ -10766,9 +10811,9 @@ end
             :mac => "44:38:39:00:03:51",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22358',
+            :libvirt__tunnel_local_port => '31428',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21358',
+            :libvirt__tunnel_port => '30428',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis01-lc3-1:fp4
@@ -10776,9 +10821,9 @@ end
             :mac => "44:38:39:00:01:8d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22130',
+            :libvirt__tunnel_local_port => '31200',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21130',
+            :libvirt__tunnel_port => '30200',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis01-lc3-1:fp5
@@ -10786,9 +10831,9 @@ end
             :mac => "44:38:39:00:02:46",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22223',
+            :libvirt__tunnel_local_port => '31293',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21223',
+            :libvirt__tunnel_port => '30293',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis01-lc3-1:fp6
@@ -10796,9 +10841,9 @@ end
             :mac => "44:38:39:00:01:0b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22065',
+            :libvirt__tunnel_local_port => '31135',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21065',
+            :libvirt__tunnel_port => '30135',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis01-lc3-1:fp7
@@ -10806,9 +10851,9 @@ end
             :mac => "44:38:39:00:00:b5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22022',
+            :libvirt__tunnel_local_port => '31092',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21022',
+            :libvirt__tunnel_port => '30092',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis01-lc3-2:fp4
@@ -10816,9 +10861,9 @@ end
             :mac => "44:38:39:00:00:8c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22001',
+            :libvirt__tunnel_local_port => '31071',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21001',
+            :libvirt__tunnel_port => '30071',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis01-lc3-2:fp5
@@ -10826,9 +10871,9 @@ end
             :mac => "44:38:39:00:03:22",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22334',
+            :libvirt__tunnel_local_port => '31404',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21334',
+            :libvirt__tunnel_port => '30404',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis01-lc3-2:fp6
@@ -10836,9 +10881,9 @@ end
             :mac => "44:38:39:00:00:72",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21988',
+            :libvirt__tunnel_local_port => '31058',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20988',
+            :libvirt__tunnel_port => '30058',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis01-lc3-2:fp7
@@ -10846,9 +10891,9 @@ end
             :mac => "44:38:39:00:00:39",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21959',
+            :libvirt__tunnel_local_port => '31029',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20959',
+            :libvirt__tunnel_port => '30029',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis01-lc4-1:fp4
@@ -10856,9 +10901,9 @@ end
             :mac => "44:38:39:00:03:aa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22403',
+            :libvirt__tunnel_local_port => '31473',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21403',
+            :libvirt__tunnel_port => '30473',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis01-lc4-1:fp5
@@ -10866,9 +10911,9 @@ end
             :mac => "44:38:39:00:03:26",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22336',
+            :libvirt__tunnel_local_port => '31406',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21336',
+            :libvirt__tunnel_port => '30406',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis01-lc4-1:fp6
@@ -10876,9 +10921,9 @@ end
             :mac => "44:38:39:00:01:db",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22169',
+            :libvirt__tunnel_local_port => '31239',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21169',
+            :libvirt__tunnel_port => '30239',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis01-lc4-1:fp7
@@ -10886,9 +10931,9 @@ end
             :mac => "44:38:39:00:01:4b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22097',
+            :libvirt__tunnel_local_port => '31167',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21097',
+            :libvirt__tunnel_port => '30167',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis01-lc4-2:fp4
@@ -10896,9 +10941,9 @@ end
             :mac => "44:38:39:00:03:4f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22357',
+            :libvirt__tunnel_local_port => '31427',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21357',
+            :libvirt__tunnel_port => '30427',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis01-lc4-2:fp5
@@ -10906,9 +10951,9 @@ end
             :mac => "44:38:39:00:02:13",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22197',
+            :libvirt__tunnel_local_port => '31267',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21197',
+            :libvirt__tunnel_port => '30267',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis01-lc4-2:fp6
@@ -10916,9 +10961,9 @@ end
             :mac => "44:38:39:00:03:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22318',
+            :libvirt__tunnel_local_port => '31388',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21318',
+            :libvirt__tunnel_port => '30388',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis01-lc4-2:fp7
@@ -10926,9 +10971,9 @@ end
             :mac => "44:38:39:00:00:43",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21964',
+            :libvirt__tunnel_local_port => '31034',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20964',
+            :libvirt__tunnel_port => '30034',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -11087,7 +11132,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:43 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:43", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -11103,9 +11148,9 @@ end
 
   ##### DEFINE VM for chassis04-fc2-1 #####
   config.vm.define "chassis04-fc2-1" do |device|
-
-    device.vm.hostname = "chassis04-fc2-1"
-
+    
+    device.vm.hostname = "chassis04-fc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -11123,9 +11168,9 @@ end
             :mac => "44:38:39:00:04:8c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22519',
+            :libvirt__tunnel_local_port => '31589',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21519',
+            :libvirt__tunnel_port => '30589',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-lc1-1:fp4
@@ -11133,9 +11178,9 @@ end
             :mac => "44:38:39:00:00:e9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22048',
+            :libvirt__tunnel_local_port => '31118',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21048',
+            :libvirt__tunnel_port => '30118',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-lc1-1:fp5
@@ -11143,9 +11188,9 @@ end
             :mac => "44:38:39:00:01:53",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22101',
+            :libvirt__tunnel_local_port => '31171',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21101',
+            :libvirt__tunnel_port => '30171',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-lc1-1:fp6
@@ -11153,9 +11198,9 @@ end
             :mac => "44:38:39:00:02:3a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22217',
+            :libvirt__tunnel_local_port => '31287',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21217',
+            :libvirt__tunnel_port => '30287',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-lc1-1:fp7
@@ -11163,9 +11208,9 @@ end
             :mac => "44:38:39:00:03:b8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22410',
+            :libvirt__tunnel_local_port => '31480',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21410',
+            :libvirt__tunnel_port => '30480',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-lc1-2:fp4
@@ -11173,9 +11218,9 @@ end
             :mac => "44:38:39:00:02:8e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22260',
+            :libvirt__tunnel_local_port => '31330',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21260',
+            :libvirt__tunnel_port => '30330',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-lc1-2:fp5
@@ -11183,9 +11228,9 @@ end
             :mac => "44:38:39:00:03:96",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22393',
+            :libvirt__tunnel_local_port => '31463',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21393',
+            :libvirt__tunnel_port => '30463',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-lc1-2:fp6
@@ -11193,9 +11238,9 @@ end
             :mac => "44:38:39:00:01:17",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22071',
+            :libvirt__tunnel_local_port => '31141',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21071',
+            :libvirt__tunnel_port => '30141',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-lc1-2:fp7
@@ -11203,9 +11248,9 @@ end
             :mac => "44:38:39:00:01:51",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22100',
+            :libvirt__tunnel_local_port => '31170',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21100',
+            :libvirt__tunnel_port => '30170',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-lc2-1:fp4
@@ -11213,9 +11258,9 @@ end
             :mac => "44:38:39:00:01:d3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22165',
+            :libvirt__tunnel_local_port => '31235',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21165',
+            :libvirt__tunnel_port => '30235',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-lc2-1:fp5
@@ -11223,9 +11268,9 @@ end
             :mac => "44:38:39:00:01:bb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22153',
+            :libvirt__tunnel_local_port => '31223',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21153',
+            :libvirt__tunnel_port => '30223',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-lc2-1:fp6
@@ -11233,9 +11278,9 @@ end
             :mac => "44:38:39:00:01:87",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22127',
+            :libvirt__tunnel_local_port => '31197',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21127',
+            :libvirt__tunnel_port => '30197',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-lc2-1:fp7
@@ -11243,9 +11288,9 @@ end
             :mac => "44:38:39:00:01:61",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22108',
+            :libvirt__tunnel_local_port => '31178',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21108',
+            :libvirt__tunnel_port => '30178',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-lc2-2:fp4
@@ -11253,9 +11298,9 @@ end
             :mac => "44:38:39:00:02:c4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22287',
+            :libvirt__tunnel_local_port => '31357',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21287',
+            :libvirt__tunnel_port => '30357',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-lc2-2:fp5
@@ -11263,9 +11308,9 @@ end
             :mac => "44:38:39:00:01:e9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22176',
+            :libvirt__tunnel_local_port => '31246',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21176',
+            :libvirt__tunnel_port => '30246',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-lc2-2:fp6
@@ -11273,9 +11318,9 @@ end
             :mac => "44:38:39:00:01:71",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22116',
+            :libvirt__tunnel_local_port => '31186',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21116',
+            :libvirt__tunnel_port => '30186',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-lc2-2:fp7
@@ -11283,9 +11328,9 @@ end
             :mac => "44:38:39:00:00:c5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22030',
+            :libvirt__tunnel_local_port => '31100',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21030',
+            :libvirt__tunnel_port => '30100',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis04-lc3-1:fp4
@@ -11293,9 +11338,9 @@ end
             :mac => "44:38:39:00:01:3f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22091',
+            :libvirt__tunnel_local_port => '31161',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21091',
+            :libvirt__tunnel_port => '30161',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis04-lc3-1:fp5
@@ -11303,9 +11348,9 @@ end
             :mac => "44:38:39:00:03:60",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22366',
+            :libvirt__tunnel_local_port => '31436',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21366',
+            :libvirt__tunnel_port => '30436',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis04-lc3-1:fp6
@@ -11313,9 +11358,9 @@ end
             :mac => "44:38:39:00:01:b9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22152',
+            :libvirt__tunnel_local_port => '31222',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21152',
+            :libvirt__tunnel_port => '30222',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis04-lc3-1:fp7
@@ -11323,9 +11368,9 @@ end
             :mac => "44:38:39:00:00:8e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22002',
+            :libvirt__tunnel_local_port => '31072',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21002',
+            :libvirt__tunnel_port => '30072',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis04-lc3-2:fp4
@@ -11333,9 +11378,9 @@ end
             :mac => "44:38:39:00:02:d4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22295',
+            :libvirt__tunnel_local_port => '31365',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21295',
+            :libvirt__tunnel_port => '30365',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis04-lc3-2:fp5
@@ -11343,9 +11388,9 @@ end
             :mac => "44:38:39:00:01:d5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22166',
+            :libvirt__tunnel_local_port => '31236',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21166',
+            :libvirt__tunnel_port => '30236',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis04-lc3-2:fp6
@@ -11353,9 +11398,9 @@ end
             :mac => "44:38:39:00:04:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22448',
+            :libvirt__tunnel_local_port => '31518',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21448',
+            :libvirt__tunnel_port => '30518',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis04-lc3-2:fp7
@@ -11363,9 +11408,9 @@ end
             :mac => "44:38:39:00:02:de",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22300',
+            :libvirt__tunnel_local_port => '31370',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21300',
+            :libvirt__tunnel_port => '30370',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis04-lc4-1:fp4
@@ -11373,9 +11418,9 @@ end
             :mac => "44:38:39:00:01:c7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22159',
+            :libvirt__tunnel_local_port => '31229',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21159',
+            :libvirt__tunnel_port => '30229',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis04-lc4-1:fp5
@@ -11383,9 +11428,9 @@ end
             :mac => "44:38:39:00:04:29",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22468',
+            :libvirt__tunnel_local_port => '31538',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21468',
+            :libvirt__tunnel_port => '30538',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis04-lc4-1:fp6
@@ -11393,9 +11438,9 @@ end
             :mac => "44:38:39:00:03:c6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22417',
+            :libvirt__tunnel_local_port => '31487',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21417',
+            :libvirt__tunnel_port => '30487',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis04-lc4-1:fp7
@@ -11403,9 +11448,9 @@ end
             :mac => "44:38:39:00:00:a2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22012',
+            :libvirt__tunnel_local_port => '31082',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21012',
+            :libvirt__tunnel_port => '30082',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis04-lc4-2:fp4
@@ -11413,9 +11458,9 @@ end
             :mac => "44:38:39:00:00:4f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21970',
+            :libvirt__tunnel_local_port => '31040',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20970',
+            :libvirt__tunnel_port => '30040',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis04-lc4-2:fp5
@@ -11423,9 +11468,9 @@ end
             :mac => "44:38:39:00:03:53",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22359',
+            :libvirt__tunnel_local_port => '31429',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21359',
+            :libvirt__tunnel_port => '30429',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis04-lc4-2:fp6
@@ -11433,9 +11478,9 @@ end
             :mac => "44:38:39:00:04:3d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22478',
+            :libvirt__tunnel_local_port => '31548',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21478',
+            :libvirt__tunnel_port => '30548',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis04-lc4-2:fp7
@@ -11443,9 +11488,9 @@ end
             :mac => "44:38:39:00:04:14",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22457',
+            :libvirt__tunnel_local_port => '31527',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21457',
+            :libvirt__tunnel_port => '30527',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -11604,7 +11649,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:14 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:14", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -11620,9 +11665,9 @@ end
 
   ##### DEFINE VM for chassis04-fc4-1 #####
   config.vm.define "chassis04-fc4-1" do |device|
-
-    device.vm.hostname = "chassis04-fc4-1"
-
+    
+    device.vm.hostname = "chassis04-fc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -11640,9 +11685,9 @@ end
             :mac => "44:38:39:00:04:8e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22520',
+            :libvirt__tunnel_local_port => '31590',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21520',
+            :libvirt__tunnel_port => '30590',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-lc1-1:fp12
@@ -11650,9 +11695,9 @@ end
             :mac => "44:38:39:00:02:c8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22289',
+            :libvirt__tunnel_local_port => '31359',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21289',
+            :libvirt__tunnel_port => '30359',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-lc1-1:fp13
@@ -11660,9 +11705,9 @@ end
             :mac => "44:38:39:00:01:35",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22086',
+            :libvirt__tunnel_local_port => '31156',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21086',
+            :libvirt__tunnel_port => '30156',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-lc1-1:fp14
@@ -11670,9 +11715,9 @@ end
             :mac => "44:38:39:00:04:10",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22455',
+            :libvirt__tunnel_local_port => '31525',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21455',
+            :libvirt__tunnel_port => '30525',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-lc1-1:fp15
@@ -11680,9 +11725,9 @@ end
             :mac => "44:38:39:00:04:37",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22475',
+            :libvirt__tunnel_local_port => '31545',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21475',
+            :libvirt__tunnel_port => '30545',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-lc1-2:fp12
@@ -11690,9 +11735,9 @@ end
             :mac => "44:38:39:00:01:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22060',
+            :libvirt__tunnel_local_port => '31130',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21060',
+            :libvirt__tunnel_port => '30130',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-lc1-2:fp13
@@ -11700,9 +11745,9 @@ end
             :mac => "44:38:39:00:01:8b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22129',
+            :libvirt__tunnel_local_port => '31199',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21129',
+            :libvirt__tunnel_port => '30199',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-lc1-2:fp14
@@ -11710,9 +11755,9 @@ end
             :mac => "44:38:39:00:03:38",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22345',
+            :libvirt__tunnel_local_port => '31415',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21345',
+            :libvirt__tunnel_port => '30415',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-lc1-2:fp15
@@ -11720,9 +11765,9 @@ end
             :mac => "44:38:39:00:01:af",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22147',
+            :libvirt__tunnel_local_port => '31217',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21147',
+            :libvirt__tunnel_port => '30217',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-lc2-1:fp12
@@ -11730,9 +11775,9 @@ end
             :mac => "44:38:39:00:00:bf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22027',
+            :libvirt__tunnel_local_port => '31097',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21027',
+            :libvirt__tunnel_port => '30097',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-lc2-1:fp13
@@ -11740,9 +11785,9 @@ end
             :mac => "44:38:39:00:00:90",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22003',
+            :libvirt__tunnel_local_port => '31073',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21003',
+            :libvirt__tunnel_port => '30073',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-lc2-1:fp14
@@ -11750,9 +11795,9 @@ end
             :mac => "44:38:39:00:01:89",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22128',
+            :libvirt__tunnel_local_port => '31198',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21128',
+            :libvirt__tunnel_port => '30198',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-lc2-1:fp15
@@ -11760,9 +11805,9 @@ end
             :mac => "44:38:39:00:00:3d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21961',
+            :libvirt__tunnel_local_port => '31031',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20961',
+            :libvirt__tunnel_port => '30031',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-lc2-2:fp12
@@ -11770,9 +11815,9 @@ end
             :mac => "44:38:39:00:04:0c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22453',
+            :libvirt__tunnel_local_port => '31523',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21453',
+            :libvirt__tunnel_port => '30523',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-lc2-2:fp13
@@ -11780,9 +11825,9 @@ end
             :mac => "44:38:39:00:03:fe",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22446',
+            :libvirt__tunnel_local_port => '31516',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21446',
+            :libvirt__tunnel_port => '30516',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-lc2-2:fp14
@@ -11790,9 +11835,9 @@ end
             :mac => "44:38:39:00:01:77",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22119',
+            :libvirt__tunnel_local_port => '31189',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21119',
+            :libvirt__tunnel_port => '30189',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-lc2-2:fp15
@@ -11800,9 +11845,9 @@ end
             :mac => "44:38:39:00:02:c6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22288',
+            :libvirt__tunnel_local_port => '31358',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21288',
+            :libvirt__tunnel_port => '30358',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis04-lc3-1:fp12
@@ -11810,9 +11855,9 @@ end
             :mac => "44:38:39:00:00:60",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21979',
+            :libvirt__tunnel_local_port => '31049',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20979',
+            :libvirt__tunnel_port => '30049',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis04-lc3-1:fp13
@@ -11820,9 +11865,9 @@ end
             :mac => "44:38:39:00:00:bb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22025',
+            :libvirt__tunnel_local_port => '31095',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21025',
+            :libvirt__tunnel_port => '30095',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis04-lc3-1:fp14
@@ -11830,9 +11875,9 @@ end
             :mac => "44:38:39:00:01:a7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22143',
+            :libvirt__tunnel_local_port => '31213',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21143',
+            :libvirt__tunnel_port => '30213',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis04-lc3-1:fp15
@@ -11840,9 +11885,9 @@ end
             :mac => "44:38:39:00:04:39",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22476',
+            :libvirt__tunnel_local_port => '31546',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21476',
+            :libvirt__tunnel_port => '30546',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis04-lc3-2:fp12
@@ -11850,9 +11895,9 @@ end
             :mac => "44:38:39:00:02:ac",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22275',
+            :libvirt__tunnel_local_port => '31345',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21275',
+            :libvirt__tunnel_port => '30345',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis04-lc3-2:fp13
@@ -11860,9 +11905,9 @@ end
             :mac => "44:38:39:00:00:20",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21946',
+            :libvirt__tunnel_local_port => '31016',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20946',
+            :libvirt__tunnel_port => '30016',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis04-lc3-2:fp14
@@ -11870,9 +11915,9 @@ end
             :mac => "44:38:39:00:01:57",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22103',
+            :libvirt__tunnel_local_port => '31173',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21103',
+            :libvirt__tunnel_port => '30173',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis04-lc3-2:fp15
@@ -11880,9 +11925,9 @@ end
             :mac => "44:38:39:00:04:43",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22481',
+            :libvirt__tunnel_local_port => '31551',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21481',
+            :libvirt__tunnel_port => '30551',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis04-lc4-1:fp12
@@ -11890,9 +11935,9 @@ end
             :mac => "44:38:39:00:01:7b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22121',
+            :libvirt__tunnel_local_port => '31191',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21121',
+            :libvirt__tunnel_port => '30191',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis04-lc4-1:fp13
@@ -11900,9 +11945,9 @@ end
             :mac => "44:38:39:00:01:5f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22107',
+            :libvirt__tunnel_local_port => '31177',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21107',
+            :libvirt__tunnel_port => '30177',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis04-lc4-1:fp14
@@ -11910,9 +11955,9 @@ end
             :mac => "44:38:39:00:02:b8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22281',
+            :libvirt__tunnel_local_port => '31351',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21281',
+            :libvirt__tunnel_port => '30351',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis04-lc4-1:fp15
@@ -11920,9 +11965,9 @@ end
             :mac => "44:38:39:00:02:2c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22210',
+            :libvirt__tunnel_local_port => '31280',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21210',
+            :libvirt__tunnel_port => '30280',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis04-lc4-2:fp12
@@ -11930,9 +11975,9 @@ end
             :mac => "44:38:39:00:02:d8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22297',
+            :libvirt__tunnel_local_port => '31367',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21297',
+            :libvirt__tunnel_port => '30367',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis04-lc4-2:fp13
@@ -11940,9 +11985,9 @@ end
             :mac => "44:38:39:00:01:b5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22150',
+            :libvirt__tunnel_local_port => '31220',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21150',
+            :libvirt__tunnel_port => '30220',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis04-lc4-2:fp14
@@ -11950,9 +11995,9 @@ end
             :mac => "44:38:39:00:00:14",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21940',
+            :libvirt__tunnel_local_port => '31010',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20940',
+            :libvirt__tunnel_port => '30010',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis04-lc4-2:fp15
@@ -11960,9 +12005,9 @@ end
             :mac => "44:38:39:00:01:1b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22073',
+            :libvirt__tunnel_local_port => '31143',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21073',
+            :libvirt__tunnel_port => '30143',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -12121,7 +12166,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:1b --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:1b", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -12137,9 +12182,9 @@ end
 
   ##### DEFINE VM for chassis02-lc3-2 #####
   config.vm.define "chassis02-lc3-2" do |device|
-
-    device.vm.hostname = "chassis02-lc3-2"
-
+    
+    device.vm.hostname = "chassis02-lc3-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -12157,9 +12202,9 @@ end
             :mac => "44:38:39:00:04:9c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22527',
+            :libvirt__tunnel_local_port => '31597',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21527',
+            :libvirt__tunnel_port => '30597',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-fc1-1:fp20
@@ -12167,9 +12212,9 @@ end
             :mac => "44:38:39:00:00:c2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21029',
+            :libvirt__tunnel_local_port => '30099',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22029',
+            :libvirt__tunnel_port => '31099',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-fc1-1:fp21
@@ -12177,9 +12222,9 @@ end
             :mac => "44:38:39:00:02:2d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21211',
+            :libvirt__tunnel_local_port => '30281',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22211',
+            :libvirt__tunnel_port => '31281',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-fc1-1:fp22
@@ -12187,9 +12232,9 @@ end
             :mac => "44:38:39:00:02:55",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21231',
+            :libvirt__tunnel_local_port => '30301',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22231',
+            :libvirt__tunnel_port => '31301',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-fc1-1:fp23
@@ -12197,9 +12242,9 @@ end
             :mac => "44:38:39:00:00:f8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21056',
+            :libvirt__tunnel_local_port => '30126',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22056',
+            :libvirt__tunnel_port => '31126',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-fc2-1:fp20
@@ -12207,9 +12252,9 @@ end
             :mac => "44:38:39:00:01:38",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21088',
+            :libvirt__tunnel_local_port => '30158',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22088',
+            :libvirt__tunnel_port => '31158',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-fc2-1:fp21
@@ -12217,9 +12262,9 @@ end
             :mac => "44:38:39:00:03:ad",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21405',
+            :libvirt__tunnel_local_port => '30475',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22405',
+            :libvirt__tunnel_port => '31475',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-fc2-1:fp22
@@ -12227,9 +12272,9 @@ end
             :mac => "44:38:39:00:04:3a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21477',
+            :libvirt__tunnel_local_port => '30547',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22477',
+            :libvirt__tunnel_port => '31547',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-fc2-1:fp23
@@ -12237,9 +12282,9 @@ end
             :mac => "44:38:39:00:00:f2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21053',
+            :libvirt__tunnel_local_port => '30123',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22053',
+            :libvirt__tunnel_port => '31123',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-fc3-1:fp20
@@ -12247,9 +12292,9 @@ end
             :mac => "44:38:39:00:01:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21061',
+            :libvirt__tunnel_local_port => '30131',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22061',
+            :libvirt__tunnel_port => '31131',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-fc3-1:fp21
@@ -12257,9 +12302,9 @@ end
             :mac => "44:38:39:00:00:fc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21058',
+            :libvirt__tunnel_local_port => '30128',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22058',
+            :libvirt__tunnel_port => '31128',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-fc3-1:fp22
@@ -12267,9 +12312,9 @@ end
             :mac => "44:38:39:00:00:6f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20987',
+            :libvirt__tunnel_local_port => '30057',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21987',
+            :libvirt__tunnel_port => '31057',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-fc3-1:fp23
@@ -12277,9 +12322,9 @@ end
             :mac => "44:38:39:00:02:0a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21193',
+            :libvirt__tunnel_local_port => '30263',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22193',
+            :libvirt__tunnel_port => '31263',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-fc4-1:fp20
@@ -12287,9 +12332,9 @@ end
             :mac => "44:38:39:00:04:1a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21461',
+            :libvirt__tunnel_local_port => '30531',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22461',
+            :libvirt__tunnel_port => '31531',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-fc4-1:fp21
@@ -12297,9 +12342,9 @@ end
             :mac => "44:38:39:00:02:ff",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21317',
+            :libvirt__tunnel_local_port => '30387',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22317',
+            :libvirt__tunnel_port => '31387',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-fc4-1:fp22
@@ -12307,9 +12352,9 @@ end
             :mac => "44:38:39:00:00:e2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21045',
+            :libvirt__tunnel_local_port => '30115',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22045',
+            :libvirt__tunnel_port => '31115',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-fc4-1:fp23
@@ -12317,9 +12362,9 @@ end
             :mac => "44:38:39:00:00:89",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21000',
+            :libvirt__tunnel_local_port => '30070',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22000',
+            :libvirt__tunnel_port => '31070',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp6 --> leaf06:swp52
@@ -12327,9 +12372,9 @@ end
             :mac => "44:38:39:00:02:09",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22192',
+            :libvirt__tunnel_local_port => '31262',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21192',
+            :libvirt__tunnel_port => '30262',
             :libvirt__iface_name => 'swp6',
             auto_config: false
 
@@ -12428,7 +12473,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:09 --> swp6"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:09", NAME="swp6", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -12444,9 +12489,9 @@ end
 
   ##### DEFINE VM for chassis03-fc2-1 #####
   config.vm.define "chassis03-fc2-1" do |device|
-
-    device.vm.hostname = "chassis03-fc2-1"
-
+    
+    device.vm.hostname = "chassis03-fc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -12464,9 +12509,9 @@ end
             :mac => "44:38:39:00:04:9e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22528',
+            :libvirt__tunnel_local_port => '31598',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21528',
+            :libvirt__tunnel_port => '30598',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-lc1-1:fp4
@@ -12474,9 +12519,9 @@ end
             :mac => "44:38:39:00:04:48",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22484',
+            :libvirt__tunnel_local_port => '31554',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21484',
+            :libvirt__tunnel_port => '30554',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-lc1-1:fp5
@@ -12484,9 +12529,9 @@ end
             :mac => "44:38:39:00:02:5b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22234',
+            :libvirt__tunnel_local_port => '31304',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21234',
+            :libvirt__tunnel_port => '30304',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-lc1-1:fp6
@@ -12494,9 +12539,9 @@ end
             :mac => "44:38:39:00:00:cf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22035',
+            :libvirt__tunnel_local_port => '31105',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21035',
+            :libvirt__tunnel_port => '30105',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-lc1-1:fp7
@@ -12504,9 +12549,9 @@ end
             :mac => "44:38:39:00:00:6e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21986',
+            :libvirt__tunnel_local_port => '31056',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20986',
+            :libvirt__tunnel_port => '30056',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-lc1-2:fp4
@@ -12514,9 +12559,9 @@ end
             :mac => "44:38:39:00:00:df",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22043',
+            :libvirt__tunnel_local_port => '31113',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21043',
+            :libvirt__tunnel_port => '30113',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-lc1-2:fp5
@@ -12524,9 +12569,9 @@ end
             :mac => "44:38:39:00:03:8c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22388',
+            :libvirt__tunnel_local_port => '31458',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21388',
+            :libvirt__tunnel_port => '30458',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-lc1-2:fp6
@@ -12534,9 +12579,9 @@ end
             :mac => "44:38:39:00:00:28",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21950',
+            :libvirt__tunnel_local_port => '31020',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20950',
+            :libvirt__tunnel_port => '30020',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-lc1-2:fp7
@@ -12544,9 +12589,9 @@ end
             :mac => "44:38:39:00:03:36",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22344',
+            :libvirt__tunnel_local_port => '31414',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21344',
+            :libvirt__tunnel_port => '30414',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-lc2-1:fp4
@@ -12554,9 +12599,9 @@ end
             :mac => "44:38:39:00:04:0e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22454',
+            :libvirt__tunnel_local_port => '31524',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21454',
+            :libvirt__tunnel_port => '30524',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-lc2-1:fp5
@@ -12564,9 +12609,9 @@ end
             :mac => "44:38:39:00:00:af",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22019',
+            :libvirt__tunnel_local_port => '31089',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21019',
+            :libvirt__tunnel_port => '30089',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-lc2-1:fp6
@@ -12574,9 +12619,9 @@ end
             :mac => "44:38:39:00:00:0a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21935',
+            :libvirt__tunnel_local_port => '31005',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20935',
+            :libvirt__tunnel_port => '30005',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-lc2-1:fp7
@@ -12584,9 +12629,9 @@ end
             :mac => "44:38:39:00:01:97",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22135',
+            :libvirt__tunnel_local_port => '31205',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21135',
+            :libvirt__tunnel_port => '30205',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-lc2-2:fp4
@@ -12594,9 +12639,9 @@ end
             :mac => "44:38:39:00:02:23",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22205',
+            :libvirt__tunnel_local_port => '31275',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21205',
+            :libvirt__tunnel_port => '30275',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-lc2-2:fp5
@@ -12604,9 +12649,9 @@ end
             :mac => "44:38:39:00:00:88",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21999',
+            :libvirt__tunnel_local_port => '31069',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20999',
+            :libvirt__tunnel_port => '30069',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-lc2-2:fp6
@@ -12614,9 +12659,9 @@ end
             :mac => "44:38:39:00:01:23",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22077',
+            :libvirt__tunnel_local_port => '31147',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21077',
+            :libvirt__tunnel_port => '30147',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-lc2-2:fp7
@@ -12624,9 +12669,9 @@ end
             :mac => "44:38:39:00:02:a2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22270',
+            :libvirt__tunnel_local_port => '31340',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21270',
+            :libvirt__tunnel_port => '30340',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis03-lc3-1:fp4
@@ -12634,9 +12679,9 @@ end
             :mac => "44:38:39:00:00:d3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22037',
+            :libvirt__tunnel_local_port => '31107',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21037',
+            :libvirt__tunnel_port => '30107',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis03-lc3-1:fp5
@@ -12644,9 +12689,9 @@ end
             :mac => "44:38:39:00:02:ae",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22276',
+            :libvirt__tunnel_local_port => '31346',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21276',
+            :libvirt__tunnel_port => '30346',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis03-lc3-1:fp6
@@ -12654,9 +12699,9 @@ end
             :mac => "44:38:39:00:01:e7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22175',
+            :libvirt__tunnel_local_port => '31245',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21175',
+            :libvirt__tunnel_port => '30245',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis03-lc3-1:fp7
@@ -12664,9 +12709,9 @@ end
             :mac => "44:38:39:00:01:ad",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22146',
+            :libvirt__tunnel_local_port => '31216',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21146',
+            :libvirt__tunnel_port => '30216',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis03-lc3-2:fp4
@@ -12674,9 +12719,9 @@ end
             :mac => "44:38:39:00:00:d5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22038',
+            :libvirt__tunnel_local_port => '31108',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21038',
+            :libvirt__tunnel_port => '30108',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis03-lc3-2:fp5
@@ -12684,9 +12729,9 @@ end
             :mac => "44:38:39:00:02:63",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22238',
+            :libvirt__tunnel_local_port => '31308',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21238',
+            :libvirt__tunnel_port => '30308',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis03-lc3-2:fp6
@@ -12694,9 +12739,9 @@ end
             :mac => "44:38:39:00:02:94",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22263',
+            :libvirt__tunnel_local_port => '31333',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21263',
+            :libvirt__tunnel_port => '30333',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis03-lc3-2:fp7
@@ -12704,9 +12749,9 @@ end
             :mac => "44:38:39:00:01:d9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22168',
+            :libvirt__tunnel_local_port => '31238',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21168',
+            :libvirt__tunnel_port => '30238',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis03-lc4-1:fp4
@@ -12714,9 +12759,9 @@ end
             :mac => "44:38:39:00:00:96",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22006',
+            :libvirt__tunnel_local_port => '31076',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21006',
+            :libvirt__tunnel_port => '30076',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis03-lc4-1:fp5
@@ -12724,9 +12769,9 @@ end
             :mac => "44:38:39:00:02:e0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22301',
+            :libvirt__tunnel_local_port => '31371',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21301',
+            :libvirt__tunnel_port => '30371',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis03-lc4-1:fp6
@@ -12734,9 +12779,9 @@ end
             :mac => "44:38:39:00:00:74",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21989',
+            :libvirt__tunnel_local_port => '31059',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20989',
+            :libvirt__tunnel_port => '30059',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis03-lc4-1:fp7
@@ -12744,9 +12789,9 @@ end
             :mac => "44:38:39:00:01:91",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22132',
+            :libvirt__tunnel_local_port => '31202',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21132',
+            :libvirt__tunnel_port => '30202',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis03-lc4-2:fp4
@@ -12754,9 +12799,9 @@ end
             :mac => "44:38:39:00:01:15",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22070',
+            :libvirt__tunnel_local_port => '31140',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21070',
+            :libvirt__tunnel_port => '30140',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis03-lc4-2:fp5
@@ -12764,9 +12809,9 @@ end
             :mac => "44:38:39:00:01:33",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22085',
+            :libvirt__tunnel_local_port => '31155',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21085',
+            :libvirt__tunnel_port => '30155',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis03-lc4-2:fp6
@@ -12774,9 +12819,9 @@ end
             :mac => "44:38:39:00:02:f0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22309',
+            :libvirt__tunnel_local_port => '31379',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21309',
+            :libvirt__tunnel_port => '30379',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis03-lc4-2:fp7
@@ -12784,9 +12829,9 @@ end
             :mac => "44:38:39:00:00:4b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21968',
+            :libvirt__tunnel_local_port => '31038',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20968',
+            :libvirt__tunnel_port => '30038',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -12945,7 +12990,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:4b --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:4b", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -12961,9 +13006,9 @@ end
 
   ##### DEFINE VM for chassis01-lc1-2 #####
   config.vm.define "chassis01-lc1-2" do |device|
-
-    device.vm.hostname = "chassis01-lc1-2"
-
+    
+    device.vm.hostname = "chassis01-lc1-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -12981,9 +13026,9 @@ end
             :mac => "44:38:39:00:04:a0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22529',
+            :libvirt__tunnel_local_port => '31599',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21529',
+            :libvirt__tunnel_port => '30599',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-fc1-1:fp4
@@ -12991,9 +13036,9 @@ end
             :mac => "44:38:39:00:03:d5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21425',
+            :libvirt__tunnel_local_port => '30495',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22425',
+            :libvirt__tunnel_port => '31495',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-fc1-1:fp5
@@ -13001,9 +13046,9 @@ end
             :mac => "44:38:39:00:02:57",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21232',
+            :libvirt__tunnel_local_port => '30302',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22232',
+            :libvirt__tunnel_port => '31302',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-fc1-1:fp6
@@ -13011,9 +13056,9 @@ end
             :mac => "44:38:39:00:00:2d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20953',
+            :libvirt__tunnel_local_port => '30023',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21953',
+            :libvirt__tunnel_port => '31023',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-fc1-1:fp7
@@ -13021,9 +13066,9 @@ end
             :mac => "44:38:39:00:03:40",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21350',
+            :libvirt__tunnel_local_port => '30420',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22350',
+            :libvirt__tunnel_port => '31420',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-fc2-1:fp4
@@ -13031,9 +13076,9 @@ end
             :mac => "44:38:39:00:04:34",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21474',
+            :libvirt__tunnel_local_port => '30544',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22474',
+            :libvirt__tunnel_port => '31544',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-fc2-1:fp5
@@ -13041,9 +13086,9 @@ end
             :mac => "44:38:39:00:03:ff",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21447',
+            :libvirt__tunnel_local_port => '30517',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22447',
+            :libvirt__tunnel_port => '31517',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-fc2-1:fp6
@@ -13051,9 +13096,9 @@ end
             :mac => "44:38:39:00:00:e4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21046',
+            :libvirt__tunnel_local_port => '30116',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22046',
+            :libvirt__tunnel_port => '31116',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-fc2-1:fp7
@@ -13061,9 +13106,9 @@ end
             :mac => "44:38:39:00:02:43",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21222',
+            :libvirt__tunnel_local_port => '30292',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22222',
+            :libvirt__tunnel_port => '31292',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-fc3-1:fp4
@@ -13071,9 +13116,9 @@ end
             :mac => "44:38:39:00:00:9d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21010',
+            :libvirt__tunnel_local_port => '30080',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22010',
+            :libvirt__tunnel_port => '31080',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-fc3-1:fp5
@@ -13081,9 +13126,9 @@ end
             :mac => "44:38:39:00:01:c8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21160',
+            :libvirt__tunnel_local_port => '30230',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22160',
+            :libvirt__tunnel_port => '31230',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-fc3-1:fp6
@@ -13091,9 +13136,9 @@ end
             :mac => "44:38:39:00:01:5c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21106',
+            :libvirt__tunnel_local_port => '30176',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22106',
+            :libvirt__tunnel_port => '31176',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-fc3-1:fp7
@@ -13101,9 +13146,9 @@ end
             :mac => "44:38:39:00:01:9a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21137',
+            :libvirt__tunnel_local_port => '30207',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22137',
+            :libvirt__tunnel_port => '31207',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-fc4-1:fp4
@@ -13111,9 +13156,9 @@ end
             :mac => "44:38:39:00:02:a3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21271',
+            :libvirt__tunnel_local_port => '30341',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22271',
+            :libvirt__tunnel_port => '31341',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-fc4-1:fp5
@@ -13121,9 +13166,9 @@ end
             :mac => "44:38:39:00:03:31",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21342',
+            :libvirt__tunnel_local_port => '30412',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22342',
+            :libvirt__tunnel_port => '31412',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-fc4-1:fp6
@@ -13131,9 +13176,9 @@ end
             :mac => "44:38:39:00:01:46",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21095',
+            :libvirt__tunnel_local_port => '30165',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22095',
+            :libvirt__tunnel_port => '31165',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-fc4-1:fp7
@@ -13141,9 +13186,9 @@ end
             :mac => "44:38:39:00:04:09",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21452',
+            :libvirt__tunnel_local_port => '30522',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22452',
+            :libvirt__tunnel_port => '31522',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp2 --> leaf02:swp51
@@ -13151,9 +13196,9 @@ end
             :mac => "44:38:39:00:04:25",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22466',
+            :libvirt__tunnel_local_port => '31536',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21466',
+            :libvirt__tunnel_port => '30536',
             :libvirt__iface_name => 'swp2',
             auto_config: false
 
@@ -13252,7 +13297,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:25 --> swp2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:25", NAME="swp2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -13268,9 +13313,9 @@ end
 
   ##### DEFINE VM for chassis03-fc3-1 #####
   config.vm.define "chassis03-fc3-1" do |device|
-
-    device.vm.hostname = "chassis03-fc3-1"
-
+    
+    device.vm.hostname = "chassis03-fc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -13288,9 +13333,9 @@ end
             :mac => "44:38:39:00:04:a2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22530',
+            :libvirt__tunnel_local_port => '31600',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21530',
+            :libvirt__tunnel_port => '30600',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-lc1-1:fp8
@@ -13298,9 +13343,9 @@ end
             :mac => "44:38:39:00:00:f5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22054',
+            :libvirt__tunnel_local_port => '31124',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21054',
+            :libvirt__tunnel_port => '30124',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-lc1-1:fp9
@@ -13308,9 +13353,9 @@ end
             :mac => "44:38:39:00:01:cb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22161',
+            :libvirt__tunnel_local_port => '31231',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21161',
+            :libvirt__tunnel_port => '30231',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-lc1-1:fp10
@@ -13318,9 +13363,9 @@ end
             :mac => "44:38:39:00:02:90",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22261',
+            :libvirt__tunnel_local_port => '31331',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21261',
+            :libvirt__tunnel_port => '30331',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-lc1-1:fp11
@@ -13328,9 +13373,9 @@ end
             :mac => "44:38:39:00:04:2b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22469',
+            :libvirt__tunnel_local_port => '31539',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21469',
+            :libvirt__tunnel_port => '30539',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-lc1-2:fp8
@@ -13338,9 +13383,9 @@ end
             :mac => "44:38:39:00:02:d6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22296',
+            :libvirt__tunnel_local_port => '31366',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21296',
+            :libvirt__tunnel_port => '30366',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-lc1-2:fp9
@@ -13348,9 +13393,9 @@ end
             :mac => "44:38:39:00:03:e3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22432',
+            :libvirt__tunnel_local_port => '31502',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21432',
+            :libvirt__tunnel_port => '30502',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-lc1-2:fp10
@@ -13358,9 +13403,9 @@ end
             :mac => "44:38:39:00:04:16",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22458',
+            :libvirt__tunnel_local_port => '31528',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21458',
+            :libvirt__tunnel_port => '30528',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-lc1-2:fp11
@@ -13368,9 +13413,9 @@ end
             :mac => "44:38:39:00:03:04",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22319',
+            :libvirt__tunnel_local_port => '31389',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21319',
+            :libvirt__tunnel_port => '30389',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-lc2-1:fp8
@@ -13378,9 +13423,9 @@ end
             :mac => "44:38:39:00:02:e6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22304',
+            :libvirt__tunnel_local_port => '31374',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21304',
+            :libvirt__tunnel_port => '30374',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-lc2-1:fp9
@@ -13388,9 +13433,9 @@ end
             :mac => "44:38:39:00:03:68",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22370',
+            :libvirt__tunnel_local_port => '31440',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21370',
+            :libvirt__tunnel_port => '30440',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-lc2-1:fp10
@@ -13398,9 +13443,9 @@ end
             :mac => "44:38:39:00:02:ce",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22292',
+            :libvirt__tunnel_local_port => '31362',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21292',
+            :libvirt__tunnel_port => '30362',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-lc2-1:fp11
@@ -13408,9 +13453,9 @@ end
             :mac => "44:38:39:00:00:64",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21981',
+            :libvirt__tunnel_local_port => '31051',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20981',
+            :libvirt__tunnel_port => '30051',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-lc2-2:fp8
@@ -13418,9 +13463,9 @@ end
             :mac => "44:38:39:00:03:34",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22343',
+            :libvirt__tunnel_local_port => '31413',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21343',
+            :libvirt__tunnel_port => '30413',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-lc2-2:fp9
@@ -13428,9 +13473,9 @@ end
             :mac => "44:38:39:00:00:41",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21963',
+            :libvirt__tunnel_local_port => '31033',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20963',
+            :libvirt__tunnel_port => '30033',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-lc2-2:fp10
@@ -13438,9 +13483,9 @@ end
             :mac => "44:38:39:00:01:9d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22138',
+            :libvirt__tunnel_local_port => '31208',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21138',
+            :libvirt__tunnel_port => '30208',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-lc2-2:fp11
@@ -13448,9 +13493,9 @@ end
             :mac => "44:38:39:00:00:24",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21948',
+            :libvirt__tunnel_local_port => '31018',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20948',
+            :libvirt__tunnel_port => '30018',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis03-lc3-1:fp8
@@ -13458,9 +13503,9 @@ end
             :mac => "44:38:39:00:01:2f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22083',
+            :libvirt__tunnel_local_port => '31153',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21083',
+            :libvirt__tunnel_port => '30153',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis03-lc3-1:fp9
@@ -13468,9 +13513,9 @@ end
             :mac => "44:38:39:00:00:b1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22020',
+            :libvirt__tunnel_local_port => '31090',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21020',
+            :libvirt__tunnel_port => '30090',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis03-lc3-1:fp10
@@ -13478,9 +13523,9 @@ end
             :mac => "44:38:39:00:02:98",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22265',
+            :libvirt__tunnel_local_port => '31335',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21265',
+            :libvirt__tunnel_port => '30335',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis03-lc3-1:fp11
@@ -13488,9 +13533,9 @@ end
             :mac => "44:38:39:00:03:c2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22415',
+            :libvirt__tunnel_local_port => '31485',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21415',
+            :libvirt__tunnel_port => '30485',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis03-lc3-2:fp8
@@ -13498,9 +13543,9 @@ end
             :mac => "44:38:39:00:03:49",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22354',
+            :libvirt__tunnel_local_port => '31424',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21354',
+            :libvirt__tunnel_port => '30424',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis03-lc3-2:fp9
@@ -13508,9 +13553,9 @@ end
             :mac => "44:38:39:00:02:61",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22237',
+            :libvirt__tunnel_local_port => '31307',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21237',
+            :libvirt__tunnel_port => '30307',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis03-lc3-2:fp10
@@ -13518,9 +13563,9 @@ end
             :mac => "44:38:39:00:01:e5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22174',
+            :libvirt__tunnel_local_port => '31244',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21174',
+            :libvirt__tunnel_port => '30244',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis03-lc3-2:fp11
@@ -13528,9 +13573,9 @@ end
             :mac => "44:38:39:00:02:5f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22236',
+            :libvirt__tunnel_local_port => '31306',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21236',
+            :libvirt__tunnel_port => '30306',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis03-lc4-1:fp8
@@ -13538,9 +13583,9 @@ end
             :mac => "44:38:39:00:01:7f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22123',
+            :libvirt__tunnel_local_port => '31193',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21123',
+            :libvirt__tunnel_port => '30193',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis03-lc4-1:fp9
@@ -13548,9 +13593,9 @@ end
             :mac => "44:38:39:00:02:80",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22253',
+            :libvirt__tunnel_local_port => '31323',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21253',
+            :libvirt__tunnel_port => '30323',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis03-lc4-1:fp10
@@ -13558,9 +13603,9 @@ end
             :mac => "44:38:39:00:00:76",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21990',
+            :libvirt__tunnel_local_port => '31060',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20990',
+            :libvirt__tunnel_port => '30060',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis03-lc4-1:fp11
@@ -13568,9 +13613,9 @@ end
             :mac => "44:38:39:00:00:5a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21976',
+            :libvirt__tunnel_local_port => '31046',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20976',
+            :libvirt__tunnel_port => '30046',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis03-lc4-2:fp8
@@ -13578,9 +13623,9 @@ end
             :mac => "44:38:39:00:02:be",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22284',
+            :libvirt__tunnel_local_port => '31354',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21284',
+            :libvirt__tunnel_port => '30354',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis03-lc4-2:fp9
@@ -13588,9 +13633,9 @@ end
             :mac => "44:38:39:00:03:18",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22329',
+            :libvirt__tunnel_local_port => '31399',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21329',
+            :libvirt__tunnel_port => '30399',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis03-lc4-2:fp10
@@ -13598,9 +13643,9 @@ end
             :mac => "44:38:39:00:01:29",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22080',
+            :libvirt__tunnel_local_port => '31150',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21080',
+            :libvirt__tunnel_port => '30150',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis03-lc4-2:fp11
@@ -13608,9 +13653,9 @@ end
             :mac => "44:38:39:00:00:1e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21945',
+            :libvirt__tunnel_local_port => '31015',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20945',
+            :libvirt__tunnel_port => '30015',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -13769,7 +13814,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:1e --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:1e", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -13785,9 +13830,9 @@ end
 
   ##### DEFINE VM for chassis01-lc1-1 #####
   config.vm.define "chassis01-lc1-1" do |device|
-
-    device.vm.hostname = "chassis01-lc1-1"
-
+    
+    device.vm.hostname = "chassis01-lc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -13805,9 +13850,9 @@ end
             :mac => "44:38:39:00:04:a4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22531',
+            :libvirt__tunnel_local_port => '31601',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21531',
+            :libvirt__tunnel_port => '30601',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-fc1-1:fp0
@@ -13815,9 +13860,9 @@ end
             :mac => "44:38:39:00:01:f8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21184',
+            :libvirt__tunnel_local_port => '30254',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22184',
+            :libvirt__tunnel_port => '31254',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-fc1-1:fp1
@@ -13825,9 +13870,9 @@ end
             :mac => "44:38:39:00:03:ef",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21439',
+            :libvirt__tunnel_local_port => '30509',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22439',
+            :libvirt__tunnel_port => '31509',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-fc1-1:fp2
@@ -13835,9 +13880,9 @@ end
             :mac => "44:38:39:00:03:5c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21364',
+            :libvirt__tunnel_local_port => '30434',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22364',
+            :libvirt__tunnel_port => '31434',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-fc1-1:fp3
@@ -13845,9 +13890,9 @@ end
             :mac => "44:38:39:00:01:68",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21112',
+            :libvirt__tunnel_local_port => '30182',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22112',
+            :libvirt__tunnel_port => '31182',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-fc2-1:fp0
@@ -13855,9 +13900,9 @@ end
             :mac => "44:38:39:00:03:af",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21406',
+            :libvirt__tunnel_local_port => '30476',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22406',
+            :libvirt__tunnel_port => '31476',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-fc2-1:fp1
@@ -13865,9 +13910,9 @@ end
             :mac => "44:38:39:00:02:14",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21198',
+            :libvirt__tunnel_local_port => '30268',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22198',
+            :libvirt__tunnel_port => '31268',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-fc2-1:fp2
@@ -13875,9 +13920,9 @@ end
             :mac => "44:38:39:00:02:68",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21241',
+            :libvirt__tunnel_local_port => '30311',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22241',
+            :libvirt__tunnel_port => '31311',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-fc2-1:fp3
@@ -13885,9 +13930,9 @@ end
             :mac => "44:38:39:00:02:27",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21208',
+            :libvirt__tunnel_local_port => '30278',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22208',
+            :libvirt__tunnel_port => '31278',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-fc3-1:fp0
@@ -13895,9 +13940,9 @@ end
             :mac => "44:38:39:00:03:42",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21351',
+            :libvirt__tunnel_local_port => '30421',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22351',
+            :libvirt__tunnel_port => '31421',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-fc3-1:fp1
@@ -13905,9 +13950,9 @@ end
             :mac => "44:38:39:00:04:1e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21463',
+            :libvirt__tunnel_local_port => '30533',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22463',
+            :libvirt__tunnel_port => '31533',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-fc3-1:fp2
@@ -13915,9 +13960,9 @@ end
             :mac => "44:38:39:00:03:0b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21323',
+            :libvirt__tunnel_local_port => '30393',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22323',
+            :libvirt__tunnel_port => '31393',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-fc3-1:fp3
@@ -13925,9 +13970,9 @@ end
             :mac => "44:38:39:00:03:eb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21437',
+            :libvirt__tunnel_local_port => '30507',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22437',
+            :libvirt__tunnel_port => '31507',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-fc4-1:fp0
@@ -13935,9 +13980,9 @@ end
             :mac => "44:38:39:00:00:bc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21026',
+            :libvirt__tunnel_local_port => '30096',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22026',
+            :libvirt__tunnel_port => '31096',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-fc4-1:fp1
@@ -13945,9 +13990,9 @@ end
             :mac => "44:38:39:00:03:ed",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21438',
+            :libvirt__tunnel_local_port => '30508',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22438',
+            :libvirt__tunnel_port => '31508',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-fc4-1:fp2
@@ -13955,9 +14000,9 @@ end
             :mac => "44:38:39:00:02:ed",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21308',
+            :libvirt__tunnel_local_port => '30378',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22308',
+            :libvirt__tunnel_port => '31378',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-fc4-1:fp3
@@ -13965,9 +14010,9 @@ end
             :mac => "44:38:39:00:00:99",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21008',
+            :libvirt__tunnel_local_port => '30078',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22008',
+            :libvirt__tunnel_port => '31078',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp1 --> leaf01:swp51
@@ -13975,9 +14020,9 @@ end
             :mac => "44:38:39:00:01:31",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22084',
+            :libvirt__tunnel_local_port => '31154',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21084',
+            :libvirt__tunnel_port => '30154',
             :libvirt__iface_name => 'swp1',
             auto_config: false
 
@@ -14076,7 +14121,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:31 --> swp1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:31", NAME="swp1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -14092,9 +14137,9 @@ end
 
   ##### DEFINE VM for chassis04-lc1-2 #####
   config.vm.define "chassis04-lc1-2" do |device|
-
-    device.vm.hostname = "chassis04-lc1-2"
-
+    
+    device.vm.hostname = "chassis04-lc1-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -14112,9 +14157,9 @@ end
             :mac => "44:38:39:00:04:a6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22532',
+            :libvirt__tunnel_local_port => '31602',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21532',
+            :libvirt__tunnel_port => '30602',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-fc1-1:fp4
@@ -14122,9 +14167,9 @@ end
             :mac => "44:38:39:00:02:eb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21307',
+            :libvirt__tunnel_local_port => '30377',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22307',
+            :libvirt__tunnel_port => '31377',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-fc1-1:fp5
@@ -14132,9 +14177,9 @@ end
             :mac => "44:38:39:00:02:bb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21283',
+            :libvirt__tunnel_local_port => '30353',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22283',
+            :libvirt__tunnel_port => '31353',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-fc1-1:fp6
@@ -14142,9 +14187,9 @@ end
             :mac => "44:38:39:00:02:b9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21282',
+            :libvirt__tunnel_local_port => '30352',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22282',
+            :libvirt__tunnel_port => '31352',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-fc1-1:fp7
@@ -14152,9 +14197,9 @@ end
             :mac => "44:38:39:00:03:09",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21322',
+            :libvirt__tunnel_local_port => '30392',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22322',
+            :libvirt__tunnel_port => '31392',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-fc2-1:fp4
@@ -14162,9 +14207,9 @@ end
             :mac => "44:38:39:00:02:8d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21260',
+            :libvirt__tunnel_local_port => '30330',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22260',
+            :libvirt__tunnel_port => '31330',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-fc2-1:fp5
@@ -14172,9 +14217,9 @@ end
             :mac => "44:38:39:00:03:95",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21393',
+            :libvirt__tunnel_local_port => '30463',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22393',
+            :libvirt__tunnel_port => '31463',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-fc2-1:fp6
@@ -14182,9 +14227,9 @@ end
             :mac => "44:38:39:00:01:16",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21071',
+            :libvirt__tunnel_local_port => '30141',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22071',
+            :libvirt__tunnel_port => '31141',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-fc2-1:fp7
@@ -14192,9 +14237,9 @@ end
             :mac => "44:38:39:00:01:50",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21100',
+            :libvirt__tunnel_local_port => '30170',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22100',
+            :libvirt__tunnel_port => '31170',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-fc3-1:fp4
@@ -14202,9 +14247,9 @@ end
             :mac => "44:38:39:00:03:2f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21341',
+            :libvirt__tunnel_local_port => '30411',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22341',
+            :libvirt__tunnel_port => '31411',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-fc3-1:fp5
@@ -14212,9 +14257,9 @@ end
             :mac => "44:38:39:00:04:45",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21483',
+            :libvirt__tunnel_local_port => '30553',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22483',
+            :libvirt__tunnel_port => '31553',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-fc3-1:fp6
@@ -14222,9 +14267,9 @@ end
             :mac => "44:38:39:00:01:40",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21092',
+            :libvirt__tunnel_local_port => '30162',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22092',
+            :libvirt__tunnel_port => '31162',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-fc3-1:fp7
@@ -14232,9 +14277,9 @@ end
             :mac => "44:38:39:00:03:89",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21387',
+            :libvirt__tunnel_local_port => '30457',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22387',
+            :libvirt__tunnel_port => '31457',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-fc4-1:fp4
@@ -14242,9 +14287,9 @@ end
             :mac => "44:38:39:00:01:00",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21060',
+            :libvirt__tunnel_local_port => '30130',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22060',
+            :libvirt__tunnel_port => '31130',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-fc4-1:fp5
@@ -14252,9 +14297,9 @@ end
             :mac => "44:38:39:00:01:8a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21129',
+            :libvirt__tunnel_local_port => '30199',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22129',
+            :libvirt__tunnel_port => '31199',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-fc4-1:fp6
@@ -14262,9 +14307,9 @@ end
             :mac => "44:38:39:00:03:37",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21345',
+            :libvirt__tunnel_local_port => '30415',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22345',
+            :libvirt__tunnel_port => '31415',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-fc4-1:fp7
@@ -14272,9 +14317,9 @@ end
             :mac => "44:38:39:00:01:ae",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21147',
+            :libvirt__tunnel_local_port => '30217',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22147',
+            :libvirt__tunnel_port => '31217',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp2 --> leaf02:swp54
@@ -14282,9 +14327,9 @@ end
             :mac => "44:38:39:00:01:27",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22079',
+            :libvirt__tunnel_local_port => '31149',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21079',
+            :libvirt__tunnel_port => '30149',
             :libvirt__iface_name => 'swp2',
             auto_config: false
 
@@ -14383,7 +14428,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:27 --> swp2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:27", NAME="swp2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -14399,9 +14444,9 @@ end
 
   ##### DEFINE VM for chassis04-lc1-1 #####
   config.vm.define "chassis04-lc1-1" do |device|
-
-    device.vm.hostname = "chassis04-lc1-1"
-
+    
+    device.vm.hostname = "chassis04-lc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -14419,9 +14464,9 @@ end
             :mac => "44:38:39:00:04:a8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22533',
+            :libvirt__tunnel_local_port => '31603',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21533',
+            :libvirt__tunnel_port => '30603',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-fc1-1:fp0
@@ -14429,9 +14474,9 @@ end
             :mac => "44:38:39:00:02:fb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21315',
+            :libvirt__tunnel_local_port => '30385',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22315',
+            :libvirt__tunnel_port => '31385',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-fc1-1:fp1
@@ -14439,9 +14484,9 @@ end
             :mac => "44:38:39:00:00:cc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21034',
+            :libvirt__tunnel_local_port => '30104',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22034',
+            :libvirt__tunnel_port => '31104',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-fc1-1:fp2
@@ -14449,9 +14494,9 @@ end
             :mac => "44:38:39:00:02:1a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21201',
+            :libvirt__tunnel_local_port => '30271',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22201',
+            :libvirt__tunnel_port => '31271',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-fc1-1:fp3
@@ -14459,9 +14504,9 @@ end
             :mac => "44:38:39:00:00:7f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20995',
+            :libvirt__tunnel_local_port => '30065',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21995',
+            :libvirt__tunnel_port => '31065',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-fc2-1:fp0
@@ -14469,9 +14514,9 @@ end
             :mac => "44:38:39:00:00:e8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21048',
+            :libvirt__tunnel_local_port => '30118',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22048',
+            :libvirt__tunnel_port => '31118',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-fc2-1:fp1
@@ -14479,9 +14524,9 @@ end
             :mac => "44:38:39:00:01:52",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21101',
+            :libvirt__tunnel_local_port => '30171',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22101',
+            :libvirt__tunnel_port => '31171',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-fc2-1:fp2
@@ -14489,9 +14534,9 @@ end
             :mac => "44:38:39:00:02:39",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21217',
+            :libvirt__tunnel_local_port => '30287',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22217',
+            :libvirt__tunnel_port => '31287',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-fc2-1:fp3
@@ -14499,9 +14544,9 @@ end
             :mac => "44:38:39:00:03:b7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21410',
+            :libvirt__tunnel_local_port => '30480',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22410',
+            :libvirt__tunnel_port => '31480',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-fc3-1:fp0
@@ -14509,9 +14554,9 @@ end
             :mac => "44:38:39:00:04:03",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21449',
+            :libvirt__tunnel_local_port => '30519',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22449',
+            :libvirt__tunnel_port => '31519',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-fc3-1:fp1
@@ -14519,9 +14564,9 @@ end
             :mac => "44:38:39:00:04:2e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21471',
+            :libvirt__tunnel_local_port => '30541',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22471',
+            :libvirt__tunnel_port => '31541',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-fc3-1:fp2
@@ -14529,9 +14574,9 @@ end
             :mac => "44:38:39:00:02:4d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21227',
+            :libvirt__tunnel_local_port => '30297',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22227',
+            :libvirt__tunnel_port => '31297',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-fc3-1:fp3
@@ -14539,9 +14584,9 @@ end
             :mac => "44:38:39:00:01:b2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21149',
+            :libvirt__tunnel_local_port => '30219',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22149',
+            :libvirt__tunnel_port => '31219',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-fc4-1:fp0
@@ -14549,9 +14594,9 @@ end
             :mac => "44:38:39:00:02:c7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21289',
+            :libvirt__tunnel_local_port => '30359',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22289',
+            :libvirt__tunnel_port => '31359',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-fc4-1:fp1
@@ -14559,9 +14604,9 @@ end
             :mac => "44:38:39:00:01:34",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21086',
+            :libvirt__tunnel_local_port => '30156',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22086',
+            :libvirt__tunnel_port => '31156',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-fc4-1:fp2
@@ -14569,9 +14614,9 @@ end
             :mac => "44:38:39:00:04:0f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21455',
+            :libvirt__tunnel_local_port => '30525',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22455',
+            :libvirt__tunnel_port => '31525',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-fc4-1:fp3
@@ -14579,9 +14624,9 @@ end
             :mac => "44:38:39:00:04:36",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21475',
+            :libvirt__tunnel_local_port => '30545',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22475',
+            :libvirt__tunnel_port => '31545',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp1 --> leaf01:swp54
@@ -14589,9 +14634,9 @@ end
             :mac => "44:38:39:00:00:86",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21998',
+            :libvirt__tunnel_local_port => '31068',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20998',
+            :libvirt__tunnel_port => '30068',
             :libvirt__iface_name => 'swp1',
             auto_config: false
 
@@ -14690,7 +14735,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:86 --> swp1"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:86", NAME="swp1", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -14706,9 +14751,9 @@ end
 
   ##### DEFINE VM for chassis03-fc1-1 #####
   config.vm.define "chassis03-fc1-1" do |device|
-
-    device.vm.hostname = "chassis03-fc1-1"
-
+    
+    device.vm.hostname = "chassis03-fc1-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -14726,9 +14771,9 @@ end
             :mac => "44:38:39:00:04:aa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22534',
+            :libvirt__tunnel_local_port => '31604',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21534',
+            :libvirt__tunnel_port => '30604',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-lc1-1:fp0
@@ -14736,9 +14781,9 @@ end
             :mac => "44:38:39:00:03:70",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22374',
+            :libvirt__tunnel_local_port => '31444',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21374',
+            :libvirt__tunnel_port => '30444',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-lc1-1:fp1
@@ -14746,9 +14791,9 @@ end
             :mac => "44:38:39:00:01:7d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22122',
+            :libvirt__tunnel_local_port => '31192',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21122',
+            :libvirt__tunnel_port => '30192',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-lc1-1:fp2
@@ -14756,9 +14801,9 @@ end
             :mac => "44:38:39:00:03:ba",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22411',
+            :libvirt__tunnel_local_port => '31481',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21411',
+            :libvirt__tunnel_port => '30481',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-lc1-1:fp3
@@ -14766,9 +14811,9 @@ end
             :mac => "44:38:39:00:04:1d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22462',
+            :libvirt__tunnel_local_port => '31532',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21462',
+            :libvirt__tunnel_port => '30532',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-lc1-2:fp0
@@ -14776,9 +14821,9 @@ end
             :mac => "44:38:39:00:02:30",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22212',
+            :libvirt__tunnel_local_port => '31282',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21212',
+            :libvirt__tunnel_port => '30282',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-lc1-2:fp1
@@ -14786,9 +14831,9 @@ end
             :mac => "44:38:39:00:02:86",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22256',
+            :libvirt__tunnel_local_port => '31326',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21256',
+            :libvirt__tunnel_port => '30326',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-lc1-2:fp2
@@ -14796,9 +14841,9 @@ end
             :mac => "44:38:39:00:01:a5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22142',
+            :libvirt__tunnel_local_port => '31212',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21142',
+            :libvirt__tunnel_port => '30212',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-lc1-2:fp3
@@ -14806,9 +14851,9 @@ end
             :mac => "44:38:39:00:00:08",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21934',
+            :libvirt__tunnel_local_port => '31004',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20934',
+            :libvirt__tunnel_port => '30004',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-lc2-1:fp0
@@ -14816,9 +14861,9 @@ end
             :mac => "44:38:39:00:01:ef",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22179',
+            :libvirt__tunnel_local_port => '31249',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21179',
+            :libvirt__tunnel_port => '30249',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-lc2-1:fp1
@@ -14826,9 +14871,9 @@ end
             :mac => "44:38:39:00:04:06",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22450',
+            :libvirt__tunnel_local_port => '31520',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21450',
+            :libvirt__tunnel_port => '30520',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-lc2-1:fp2
@@ -14836,9 +14881,9 @@ end
             :mac => "44:38:39:00:03:e5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22433',
+            :libvirt__tunnel_local_port => '31503',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21433',
+            :libvirt__tunnel_port => '30503',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-lc2-1:fp3
@@ -14846,9 +14891,9 @@ end
             :mac => "44:38:39:00:01:67",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22111',
+            :libvirt__tunnel_local_port => '31181',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21111',
+            :libvirt__tunnel_port => '30181',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-lc2-2:fp0
@@ -14856,9 +14901,9 @@ end
             :mac => "44:38:39:00:00:62",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21980',
+            :libvirt__tunnel_local_port => '31050',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20980',
+            :libvirt__tunnel_port => '30050',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-lc2-2:fp1
@@ -14866,9 +14911,9 @@ end
             :mac => "44:38:39:00:01:f5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22182',
+            :libvirt__tunnel_local_port => '31252',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21182',
+            :libvirt__tunnel_port => '30252',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-lc2-2:fp2
@@ -14876,9 +14921,9 @@ end
             :mac => "44:38:39:00:03:f8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22443',
+            :libvirt__tunnel_local_port => '31513',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21443',
+            :libvirt__tunnel_port => '30513',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-lc2-2:fp3
@@ -14886,9 +14931,9 @@ end
             :mac => "44:38:39:00:00:1c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21944',
+            :libvirt__tunnel_local_port => '31014',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20944',
+            :libvirt__tunnel_port => '30014',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis03-lc3-1:fp0
@@ -14896,9 +14941,9 @@ end
             :mac => "44:38:39:00:03:28",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22337',
+            :libvirt__tunnel_local_port => '31407',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21337',
+            :libvirt__tunnel_port => '30407',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis03-lc3-1:fp1
@@ -14906,9 +14951,9 @@ end
             :mac => "44:38:39:00:03:6a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22371',
+            :libvirt__tunnel_local_port => '31441',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21371',
+            :libvirt__tunnel_port => '30441',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis03-lc3-1:fp2
@@ -14916,9 +14961,9 @@ end
             :mac => "44:38:39:00:03:a8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22402',
+            :libvirt__tunnel_local_port => '31472',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21402',
+            :libvirt__tunnel_port => '30472',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis03-lc3-1:fp3
@@ -14926,9 +14971,9 @@ end
             :mac => "44:38:39:00:01:c3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22157',
+            :libvirt__tunnel_local_port => '31227',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21157',
+            :libvirt__tunnel_port => '30227',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis03-lc3-2:fp0
@@ -14936,9 +14981,9 @@ end
             :mac => "44:38:39:00:02:dc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22299',
+            :libvirt__tunnel_local_port => '31369',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21299',
+            :libvirt__tunnel_port => '30369',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis03-lc3-2:fp1
@@ -14946,9 +14991,9 @@ end
             :mac => "44:38:39:00:03:6c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22372',
+            :libvirt__tunnel_local_port => '31442',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21372',
+            :libvirt__tunnel_port => '30442',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis03-lc3-2:fp2
@@ -14956,9 +15001,9 @@ end
             :mac => "44:38:39:00:01:9f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22139',
+            :libvirt__tunnel_local_port => '31209',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21139',
+            :libvirt__tunnel_port => '30209',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis03-lc3-2:fp3
@@ -14966,9 +15011,9 @@ end
             :mac => "44:38:39:00:00:7a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21992',
+            :libvirt__tunnel_local_port => '31062',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20992',
+            :libvirt__tunnel_port => '30062',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis03-lc4-1:fp0
@@ -14976,9 +15021,9 @@ end
             :mac => "44:38:39:00:02:f6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22312',
+            :libvirt__tunnel_local_port => '31382',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21312',
+            :libvirt__tunnel_port => '30382',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis03-lc4-1:fp1
@@ -14986,9 +15031,9 @@ end
             :mac => "44:38:39:00:00:db",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22041',
+            :libvirt__tunnel_local_port => '31111',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21041',
+            :libvirt__tunnel_port => '30111',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis03-lc4-1:fp2
@@ -14996,9 +15041,9 @@ end
             :mac => "44:38:39:00:03:a0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22398',
+            :libvirt__tunnel_local_port => '31468',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21398',
+            :libvirt__tunnel_port => '30468',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis03-lc4-1:fp3
@@ -15006,9 +15051,9 @@ end
             :mac => "44:38:39:00:03:df",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22430',
+            :libvirt__tunnel_local_port => '31500',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21430',
+            :libvirt__tunnel_port => '30500',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis03-lc4-2:fp0
@@ -15016,9 +15061,9 @@ end
             :mac => "44:38:39:00:01:3b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22089',
+            :libvirt__tunnel_local_port => '31159',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21089',
+            :libvirt__tunnel_port => '30159',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis03-lc4-2:fp1
@@ -15026,9 +15071,9 @@ end
             :mac => "44:38:39:00:02:1d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22202',
+            :libvirt__tunnel_local_port => '31272',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21202',
+            :libvirt__tunnel_port => '30272',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis03-lc4-2:fp2
@@ -15036,9 +15081,9 @@ end
             :mac => "44:38:39:00:02:e4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22303',
+            :libvirt__tunnel_local_port => '31373',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21303',
+            :libvirt__tunnel_port => '30373',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis03-lc4-2:fp3
@@ -15046,9 +15091,9 @@ end
             :mac => "44:38:39:00:00:7e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21994',
+            :libvirt__tunnel_local_port => '31064',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20994',
+            :libvirt__tunnel_port => '30064',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -15207,7 +15252,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:7e --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:7e", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -15223,9 +15268,9 @@ end
 
   ##### DEFINE VM for chassis03-lc2-2 #####
   config.vm.define "chassis03-lc2-2" do |device|
-
-    device.vm.hostname = "chassis03-lc2-2"
-
+    
+    device.vm.hostname = "chassis03-lc2-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -15243,9 +15288,9 @@ end
             :mac => "44:38:39:00:04:ac",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22535',
+            :libvirt__tunnel_local_port => '31605',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21535',
+            :libvirt__tunnel_port => '30605',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-fc1-1:fp12
@@ -15253,9 +15298,9 @@ end
             :mac => "44:38:39:00:00:61",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20980',
+            :libvirt__tunnel_local_port => '30050',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21980',
+            :libvirt__tunnel_port => '31050',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-fc1-1:fp13
@@ -15263,9 +15308,9 @@ end
             :mac => "44:38:39:00:01:f4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21182',
+            :libvirt__tunnel_local_port => '30252',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22182',
+            :libvirt__tunnel_port => '31252',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-fc1-1:fp14
@@ -15273,9 +15318,9 @@ end
             :mac => "44:38:39:00:03:f7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21443',
+            :libvirt__tunnel_local_port => '30513',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22443',
+            :libvirt__tunnel_port => '31513',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-fc1-1:fp15
@@ -15283,9 +15328,9 @@ end
             :mac => "44:38:39:00:00:1b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20944',
+            :libvirt__tunnel_local_port => '30014',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21944',
+            :libvirt__tunnel_port => '31014',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-fc2-1:fp12
@@ -15293,9 +15338,9 @@ end
             :mac => "44:38:39:00:02:22",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21205',
+            :libvirt__tunnel_local_port => '30275',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22205',
+            :libvirt__tunnel_port => '31275',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-fc2-1:fp13
@@ -15303,9 +15348,9 @@ end
             :mac => "44:38:39:00:00:87",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20999',
+            :libvirt__tunnel_local_port => '30069',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21999',
+            :libvirt__tunnel_port => '31069',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-fc2-1:fp14
@@ -15313,9 +15358,9 @@ end
             :mac => "44:38:39:00:01:22",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21077',
+            :libvirt__tunnel_local_port => '30147',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22077',
+            :libvirt__tunnel_port => '31147',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-fc2-1:fp15
@@ -15323,9 +15368,9 @@ end
             :mac => "44:38:39:00:02:a1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21270',
+            :libvirt__tunnel_local_port => '30340',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22270',
+            :libvirt__tunnel_port => '31340',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-fc3-1:fp12
@@ -15333,9 +15378,9 @@ end
             :mac => "44:38:39:00:03:33",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21343',
+            :libvirt__tunnel_local_port => '30413',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22343',
+            :libvirt__tunnel_port => '31413',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-fc3-1:fp13
@@ -15343,9 +15388,9 @@ end
             :mac => "44:38:39:00:00:40",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20963',
+            :libvirt__tunnel_local_port => '30033',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21963',
+            :libvirt__tunnel_port => '31033',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-fc3-1:fp14
@@ -15353,9 +15398,9 @@ end
             :mac => "44:38:39:00:01:9c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21138',
+            :libvirt__tunnel_local_port => '30208',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22138',
+            :libvirt__tunnel_port => '31208',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-fc3-1:fp15
@@ -15363,9 +15408,9 @@ end
             :mac => "44:38:39:00:00:23",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20948',
+            :libvirt__tunnel_local_port => '30018',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21948',
+            :libvirt__tunnel_port => '31018',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-fc4-1:fp12
@@ -15373,9 +15418,9 @@ end
             :mac => "44:38:39:00:03:b3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21408',
+            :libvirt__tunnel_local_port => '30478',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22408',
+            :libvirt__tunnel_port => '31478',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-fc4-1:fp13
@@ -15383,9 +15428,9 @@ end
             :mac => "44:38:39:00:01:6a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21113',
+            :libvirt__tunnel_local_port => '30183',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22113',
+            :libvirt__tunnel_port => '31183',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-fc4-1:fp14
@@ -15393,9 +15438,9 @@ end
             :mac => "44:38:39:00:01:0c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21066',
+            :libvirt__tunnel_local_port => '30136',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22066',
+            :libvirt__tunnel_port => '31136',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-fc4-1:fp15
@@ -15403,9 +15448,9 @@ end
             :mac => "44:38:39:00:01:fe",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21187',
+            :libvirt__tunnel_local_port => '30257',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22187',
+            :libvirt__tunnel_port => '31257',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp4 --> leaf04:swp53
@@ -15413,9 +15458,9 @@ end
             :mac => "44:38:39:00:04:27",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22467',
+            :libvirt__tunnel_local_port => '31537',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21467',
+            :libvirt__tunnel_port => '30537',
             :libvirt__iface_name => 'swp4',
             auto_config: false
 
@@ -15514,7 +15559,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:27 --> swp4"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:27", NAME="swp4", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -15530,9 +15575,9 @@ end
 
   ##### DEFINE VM for chassis01-lc4-2 #####
   config.vm.define "chassis01-lc4-2" do |device|
-
-    device.vm.hostname = "chassis01-lc4-2"
-
+    
+    device.vm.hostname = "chassis01-lc4-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -15550,9 +15595,9 @@ end
             :mac => "44:38:39:00:04:ae",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22536',
+            :libvirt__tunnel_local_port => '31606',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21536',
+            :libvirt__tunnel_port => '30606',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-fc1-1:fp28
@@ -15560,9 +15605,9 @@ end
             :mac => "44:38:39:00:02:9b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21267',
+            :libvirt__tunnel_local_port => '30337',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22267',
+            :libvirt__tunnel_port => '31337',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-fc1-1:fp29
@@ -15570,9 +15615,9 @@ end
             :mac => "44:38:39:00:03:73",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21376',
+            :libvirt__tunnel_local_port => '30446',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22376',
+            :libvirt__tunnel_port => '31446',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-fc1-1:fp30
@@ -15580,9 +15625,9 @@ end
             :mac => "44:38:39:00:00:05",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20933',
+            :libvirt__tunnel_local_port => '30003',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21933',
+            :libvirt__tunnel_port => '31003',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-fc1-1:fp31
@@ -15590,9 +15635,9 @@ end
             :mac => "44:38:39:00:03:63",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21368',
+            :libvirt__tunnel_local_port => '30438',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22368',
+            :libvirt__tunnel_port => '31438',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-fc2-1:fp28
@@ -15600,9 +15645,9 @@ end
             :mac => "44:38:39:00:03:4e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21357',
+            :libvirt__tunnel_local_port => '30427',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22357',
+            :libvirt__tunnel_port => '31427',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-fc2-1:fp29
@@ -15610,9 +15655,9 @@ end
             :mac => "44:38:39:00:02:12",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21197',
+            :libvirt__tunnel_local_port => '30267',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22197',
+            :libvirt__tunnel_port => '31267',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-fc2-1:fp30
@@ -15620,9 +15665,9 @@ end
             :mac => "44:38:39:00:03:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21318',
+            :libvirt__tunnel_local_port => '30388',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22318',
+            :libvirt__tunnel_port => '31388',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-fc2-1:fp31
@@ -15630,9 +15675,9 @@ end
             :mac => "44:38:39:00:00:42",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20964',
+            :libvirt__tunnel_local_port => '30034',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21964',
+            :libvirt__tunnel_port => '31034',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-fc3-1:fp28
@@ -15640,9 +15685,9 @@ end
             :mac => "44:38:39:00:01:42",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21093',
+            :libvirt__tunnel_local_port => '30163',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22093',
+            :libvirt__tunnel_port => '31163',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-fc3-1:fp29
@@ -15650,9 +15695,9 @@ end
             :mac => "44:38:39:00:01:4e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21099',
+            :libvirt__tunnel_local_port => '30169',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22099',
+            :libvirt__tunnel_port => '31169',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-fc3-1:fp30
@@ -15660,9 +15705,9 @@ end
             :mac => "44:38:39:00:00:d0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21036',
+            :libvirt__tunnel_local_port => '30106',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22036',
+            :libvirt__tunnel_port => '31106',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-fc3-1:fp31
@@ -15670,9 +15715,9 @@ end
             :mac => "44:38:39:00:02:1e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21203',
+            :libvirt__tunnel_local_port => '30273',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22203',
+            :libvirt__tunnel_port => '31273',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-fc4-1:fp28
@@ -15680,9 +15725,9 @@ end
             :mac => "44:38:39:00:00:31",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20955',
+            :libvirt__tunnel_local_port => '30025',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21955',
+            :libvirt__tunnel_port => '31025',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-fc4-1:fp29
@@ -15690,9 +15735,9 @@ end
             :mac => "44:38:39:00:03:b1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21407',
+            :libvirt__tunnel_local_port => '30477',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22407',
+            :libvirt__tunnel_port => '31477',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-fc4-1:fp30
@@ -15700,9 +15745,9 @@ end
             :mac => "44:38:39:00:00:0f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20938',
+            :libvirt__tunnel_local_port => '30008',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21938',
+            :libvirt__tunnel_port => '31008',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-fc4-1:fp31
@@ -15710,9 +15755,9 @@ end
             :mac => "44:38:39:00:02:7b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21251',
+            :libvirt__tunnel_local_port => '30321',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22251',
+            :libvirt__tunnel_port => '31321',
             :libvirt__iface_name => 'fp15',
             auto_config: false
 
@@ -15807,7 +15852,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:7b --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:7b", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -15823,9 +15868,9 @@ end
 
   ##### DEFINE VM for chassis01-lc4-1 #####
   config.vm.define "chassis01-lc4-1" do |device|
-
-    device.vm.hostname = "chassis01-lc4-1"
-
+    
+    device.vm.hostname = "chassis01-lc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -15843,9 +15888,9 @@ end
             :mac => "44:38:39:00:04:b0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22537',
+            :libvirt__tunnel_local_port => '31607',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21537',
+            :libvirt__tunnel_port => '30607',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-fc1-1:fp24
@@ -15853,9 +15898,9 @@ end
             :mac => "44:38:39:00:00:51",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20972',
+            :libvirt__tunnel_local_port => '30042',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21972',
+            :libvirt__tunnel_port => '31042',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-fc1-1:fp25
@@ -15863,9 +15908,9 @@ end
             :mac => "44:38:39:00:04:20",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21464',
+            :libvirt__tunnel_local_port => '30534',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22464',
+            :libvirt__tunnel_port => '31534',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-fc1-1:fp26
@@ -15873,9 +15918,9 @@ end
             :mac => "44:38:39:00:01:2a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21081',
+            :libvirt__tunnel_local_port => '30151',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22081',
+            :libvirt__tunnel_port => '31151',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-fc1-1:fp27
@@ -15883,9 +15928,9 @@ end
             :mac => "44:38:39:00:03:99",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21395',
+            :libvirt__tunnel_local_port => '30465',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22395',
+            :libvirt__tunnel_port => '31465',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-fc2-1:fp24
@@ -15893,9 +15938,9 @@ end
             :mac => "44:38:39:00:03:a9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21403',
+            :libvirt__tunnel_local_port => '30473',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22403',
+            :libvirt__tunnel_port => '31473',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-fc2-1:fp25
@@ -15903,9 +15948,9 @@ end
             :mac => "44:38:39:00:03:25",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21336',
+            :libvirt__tunnel_local_port => '30406',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22336',
+            :libvirt__tunnel_port => '31406',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-fc2-1:fp26
@@ -15913,9 +15958,9 @@ end
             :mac => "44:38:39:00:01:da",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21169',
+            :libvirt__tunnel_local_port => '30239',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22169',
+            :libvirt__tunnel_port => '31239',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-fc2-1:fp27
@@ -15923,9 +15968,9 @@ end
             :mac => "44:38:39:00:01:4a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21097',
+            :libvirt__tunnel_local_port => '30167',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22097',
+            :libvirt__tunnel_port => '31167',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-fc3-1:fp24
@@ -15933,9 +15978,9 @@ end
             :mac => "44:38:39:00:00:f0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21052',
+            :libvirt__tunnel_local_port => '30122',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22052',
+            :libvirt__tunnel_port => '31122',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-fc3-1:fp25
@@ -15943,9 +15988,9 @@ end
             :mac => "44:38:39:00:01:06",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21063',
+            :libvirt__tunnel_local_port => '30133',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22063',
+            :libvirt__tunnel_port => '31133',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-fc3-1:fp26
@@ -15953,9 +15998,9 @@ end
             :mac => "44:38:39:00:01:ce",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21163',
+            :libvirt__tunnel_local_port => '30233',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22163',
+            :libvirt__tunnel_port => '31233',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-fc3-1:fp27
@@ -15963,9 +16008,9 @@ end
             :mac => "44:38:39:00:01:fc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21186',
+            :libvirt__tunnel_local_port => '30256',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22186',
+            :libvirt__tunnel_port => '31256',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-fc4-1:fp24
@@ -15973,9 +16018,9 @@ end
             :mac => "44:38:39:00:03:ab",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21404',
+            :libvirt__tunnel_local_port => '30474',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22404',
+            :libvirt__tunnel_port => '31474',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-fc4-1:fp25
@@ -15983,9 +16028,9 @@ end
             :mac => "44:38:39:00:01:20",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21076',
+            :libvirt__tunnel_local_port => '30146',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22076',
+            :libvirt__tunnel_port => '31146',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-fc4-1:fp26
@@ -15993,9 +16038,9 @@ end
             :mac => "44:38:39:00:01:c0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21156',
+            :libvirt__tunnel_local_port => '30226',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22156',
+            :libvirt__tunnel_port => '31226',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-fc4-1:fp27
@@ -16003,9 +16048,9 @@ end
             :mac => "44:38:39:00:01:6e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21115',
+            :libvirt__tunnel_local_port => '30185',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22115',
+            :libvirt__tunnel_port => '31185',
             :libvirt__iface_name => 'fp15',
             auto_config: false
 
@@ -16100,7 +16145,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:6e --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:6e", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -16116,9 +16161,9 @@ end
 
   ##### DEFINE VM for chassis01-lc2-1 #####
   config.vm.define "chassis01-lc2-1" do |device|
-
-    device.vm.hostname = "chassis01-lc2-1"
-
+    
+    device.vm.hostname = "chassis01-lc2-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -16131,14 +16176,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp53
+      # link for eth0 --> oob-mgmt-switch:swp54
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:b2",
+            :mac => "44:38:39:00:04:b4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22538',
+            :libvirt__tunnel_local_port => '31609',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21538',
+            :libvirt__tunnel_port => '30609',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-fc1-1:fp8
@@ -16146,9 +16191,9 @@ end
             :mac => "44:38:39:00:02:75",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21248',
+            :libvirt__tunnel_local_port => '30318',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22248',
+            :libvirt__tunnel_port => '31318',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-fc1-1:fp9
@@ -16156,9 +16201,9 @@ end
             :mac => "44:38:39:00:02:73",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21247',
+            :libvirt__tunnel_local_port => '30317',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22247',
+            :libvirt__tunnel_port => '31317',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-fc1-1:fp10
@@ -16166,9 +16211,9 @@ end
             :mac => "44:38:39:00:02:c9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21290',
+            :libvirt__tunnel_local_port => '30360',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22290',
+            :libvirt__tunnel_port => '31360',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-fc1-1:fp11
@@ -16176,9 +16221,9 @@ end
             :mac => "44:38:39:00:02:49",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21225',
+            :libvirt__tunnel_local_port => '30295',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22225',
+            :libvirt__tunnel_port => '31295',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-fc2-1:fp8
@@ -16186,9 +16231,9 @@ end
             :mac => "44:38:39:00:02:0c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21194',
+            :libvirt__tunnel_local_port => '30264',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22194',
+            :libvirt__tunnel_port => '31264',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-fc2-1:fp9
@@ -16196,9 +16241,9 @@ end
             :mac => "44:38:39:00:00:0d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20937',
+            :libvirt__tunnel_local_port => '30007',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21937',
+            :libvirt__tunnel_port => '31007',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-fc2-1:fp10
@@ -16206,9 +16251,9 @@ end
             :mac => "44:38:39:00:02:a5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21272',
+            :libvirt__tunnel_local_port => '30342',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22272',
+            :libvirt__tunnel_port => '31342',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-fc2-1:fp11
@@ -16216,9 +16261,9 @@ end
             :mac => "44:38:39:00:03:56",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21361',
+            :libvirt__tunnel_local_port => '30431',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22361',
+            :libvirt__tunnel_port => '31431',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-fc3-1:fp8
@@ -16226,9 +16271,9 @@ end
             :mac => "44:38:39:00:00:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20931',
+            :libvirt__tunnel_local_port => '30001',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21931',
+            :libvirt__tunnel_port => '31001',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-fc3-1:fp9
@@ -16236,9 +16281,9 @@ end
             :mac => "44:38:39:00:03:9d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21397',
+            :libvirt__tunnel_local_port => '30467',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22397',
+            :libvirt__tunnel_port => '31467',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-fc3-1:fp10
@@ -16246,9 +16291,9 @@ end
             :mac => "44:38:39:00:01:cc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21162',
+            :libvirt__tunnel_local_port => '30232',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22162',
+            :libvirt__tunnel_port => '31232',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-fc3-1:fp11
@@ -16256,9 +16301,9 @@ end
             :mac => "44:38:39:00:03:58",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21362',
+            :libvirt__tunnel_local_port => '30432',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22362',
+            :libvirt__tunnel_port => '31432',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-fc4-1:fp8
@@ -16266,9 +16311,9 @@ end
             :mac => "44:38:39:00:01:f6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21183',
+            :libvirt__tunnel_local_port => '30253',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22183',
+            :libvirt__tunnel_port => '31253',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-fc4-1:fp9
@@ -16276,9 +16321,9 @@ end
             :mac => "44:38:39:00:03:87",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21386',
+            :libvirt__tunnel_local_port => '30456',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22386',
+            :libvirt__tunnel_port => '31456',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-fc4-1:fp10
@@ -16286,9 +16331,9 @@ end
             :mac => "44:38:39:00:00:4c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20969',
+            :libvirt__tunnel_local_port => '30039',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21969',
+            :libvirt__tunnel_port => '31039',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-fc4-1:fp11
@@ -16296,9 +16341,9 @@ end
             :mac => "44:38:39:00:00:e0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21044',
+            :libvirt__tunnel_local_port => '30114',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22044',
+            :libvirt__tunnel_port => '31114',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp3 --> leaf03:swp51
@@ -16306,9 +16351,9 @@ end
             :mac => "44:38:39:00:03:98",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22394',
+            :libvirt__tunnel_local_port => '31464',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21394',
+            :libvirt__tunnel_port => '30464',
             :libvirt__iface_name => 'swp3',
             auto_config: false
 
@@ -16336,8 +16381,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:b2 --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:b2", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:b4 --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:b4", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:75 --> fp0"
@@ -16407,7 +16452,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:98 --> swp3"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:98", NAME="swp3", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -16423,9 +16468,9 @@ end
 
   ##### DEFINE VM for chassis03-lc4-1 #####
   config.vm.define "chassis03-lc4-1" do |device|
-
-    device.vm.hostname = "chassis03-lc4-1"
-
+    
+    device.vm.hostname = "chassis03-lc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -16438,14 +16483,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp54
+      # link for eth0 --> oob-mgmt-switch:swp55
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:b4",
+            :mac => "44:38:39:00:04:b6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22539',
+            :libvirt__tunnel_local_port => '31610',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21539',
+            :libvirt__tunnel_port => '30610',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-fc1-1:fp24
@@ -16453,9 +16498,9 @@ end
             :mac => "44:38:39:00:02:f5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21312',
+            :libvirt__tunnel_local_port => '30382',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22312',
+            :libvirt__tunnel_port => '31382',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-fc1-1:fp25
@@ -16463,9 +16508,9 @@ end
             :mac => "44:38:39:00:00:da",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21041',
+            :libvirt__tunnel_local_port => '30111',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22041',
+            :libvirt__tunnel_port => '31111',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-fc1-1:fp26
@@ -16473,9 +16518,9 @@ end
             :mac => "44:38:39:00:03:9f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21398',
+            :libvirt__tunnel_local_port => '30468',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22398',
+            :libvirt__tunnel_port => '31468',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-fc1-1:fp27
@@ -16483,9 +16528,9 @@ end
             :mac => "44:38:39:00:03:de",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21430',
+            :libvirt__tunnel_local_port => '30500',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22430',
+            :libvirt__tunnel_port => '31500',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-fc2-1:fp24
@@ -16493,9 +16538,9 @@ end
             :mac => "44:38:39:00:00:95",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21006',
+            :libvirt__tunnel_local_port => '30076',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22006',
+            :libvirt__tunnel_port => '31076',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-fc2-1:fp25
@@ -16503,9 +16548,9 @@ end
             :mac => "44:38:39:00:02:df",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21301',
+            :libvirt__tunnel_local_port => '30371',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22301',
+            :libvirt__tunnel_port => '31371',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-fc2-1:fp26
@@ -16513,9 +16558,9 @@ end
             :mac => "44:38:39:00:00:73",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20989',
+            :libvirt__tunnel_local_port => '30059',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21989',
+            :libvirt__tunnel_port => '31059',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-fc2-1:fp27
@@ -16523,9 +16568,9 @@ end
             :mac => "44:38:39:00:01:90",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21132',
+            :libvirt__tunnel_local_port => '30202',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22132',
+            :libvirt__tunnel_port => '31202',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-fc3-1:fp24
@@ -16533,9 +16578,9 @@ end
             :mac => "44:38:39:00:01:7e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21123',
+            :libvirt__tunnel_local_port => '30193',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22123',
+            :libvirt__tunnel_port => '31193',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-fc3-1:fp25
@@ -16543,9 +16588,9 @@ end
             :mac => "44:38:39:00:02:7f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21253',
+            :libvirt__tunnel_local_port => '30323',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22253',
+            :libvirt__tunnel_port => '31323',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-fc3-1:fp26
@@ -16553,9 +16598,9 @@ end
             :mac => "44:38:39:00:00:75",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20990',
+            :libvirt__tunnel_local_port => '30060',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21990',
+            :libvirt__tunnel_port => '31060',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-fc3-1:fp27
@@ -16563,9 +16608,9 @@ end
             :mac => "44:38:39:00:00:59",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20976',
+            :libvirt__tunnel_local_port => '30046',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21976',
+            :libvirt__tunnel_port => '31046',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-fc4-1:fp24
@@ -16573,9 +16618,9 @@ end
             :mac => "44:38:39:00:04:30",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21472',
+            :libvirt__tunnel_local_port => '30542',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22472',
+            :libvirt__tunnel_port => '31542',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-fc4-1:fp25
@@ -16583,9 +16628,9 @@ end
             :mac => "44:38:39:00:04:3e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21479',
+            :libvirt__tunnel_local_port => '30549',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22479',
+            :libvirt__tunnel_port => '31549',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-fc4-1:fp26
@@ -16593,9 +16638,9 @@ end
             :mac => "44:38:39:00:04:40",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21480',
+            :libvirt__tunnel_local_port => '30550',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22480',
+            :libvirt__tunnel_port => '31550',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-fc4-1:fp27
@@ -16603,9 +16648,9 @@ end
             :mac => "44:38:39:00:00:83",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20997',
+            :libvirt__tunnel_local_port => '30067',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21997',
+            :libvirt__tunnel_port => '31067',
             :libvirt__iface_name => 'fp15',
             auto_config: false
 
@@ -16633,8 +16678,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:b4 --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:b4", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:b6 --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:b6", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:f5 --> fp0"
@@ -16700,7 +16745,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:83 --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:83", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -16716,9 +16761,9 @@ end
 
   ##### DEFINE VM for chassis01-lc2-2 #####
   config.vm.define "chassis01-lc2-2" do |device|
-
-    device.vm.hostname = "chassis01-lc2-2"
-
+    
+    device.vm.hostname = "chassis01-lc2-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -16731,14 +16776,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp55
+      # link for eth0 --> oob-mgmt-switch:swp56
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:b6",
+            :mac => "44:38:39:00:04:b8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22540',
+            :libvirt__tunnel_local_port => '31611',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21540',
+            :libvirt__tunnel_port => '30611',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-fc1-1:fp12
@@ -16746,9 +16791,9 @@ end
             :mac => "44:38:39:00:03:c3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21416',
+            :libvirt__tunnel_local_port => '30486',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22416',
+            :libvirt__tunnel_port => '31486',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-fc1-1:fp13
@@ -16756,9 +16801,9 @@ end
             :mac => "44:38:39:00:03:05",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21320',
+            :libvirt__tunnel_local_port => '30390',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22320',
+            :libvirt__tunnel_port => '31390',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-fc1-1:fp14
@@ -16766,9 +16811,9 @@ end
             :mac => "44:38:39:00:00:d8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21040',
+            :libvirt__tunnel_local_port => '30110',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22040',
+            :libvirt__tunnel_port => '31110',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-fc1-1:fp15
@@ -16776,9 +16821,9 @@ end
             :mac => "44:38:39:00:03:1d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21332',
+            :libvirt__tunnel_local_port => '30402',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22332',
+            :libvirt__tunnel_port => '31402',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-fc2-1:fp12
@@ -16786,9 +16831,9 @@ end
             :mac => "44:38:39:00:01:e0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21172',
+            :libvirt__tunnel_local_port => '30242',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22172',
+            :libvirt__tunnel_port => '31242',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-fc2-1:fp13
@@ -16796,9 +16841,9 @@ end
             :mac => "44:38:39:00:00:34",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20957',
+            :libvirt__tunnel_local_port => '30027',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21957',
+            :libvirt__tunnel_port => '31027',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-fc2-1:fp14
@@ -16806,9 +16851,9 @@ end
             :mac => "44:38:39:00:01:a2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21141',
+            :libvirt__tunnel_local_port => '30211',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22141',
+            :libvirt__tunnel_port => '31211',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-fc2-1:fp15
@@ -16816,9 +16861,9 @@ end
             :mac => "44:38:39:00:03:50",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21358',
+            :libvirt__tunnel_local_port => '30428',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22358',
+            :libvirt__tunnel_port => '31428',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-fc3-1:fp12
@@ -16826,9 +16871,9 @@ end
             :mac => "44:38:39:00:01:ea",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21177',
+            :libvirt__tunnel_local_port => '30247',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22177',
+            :libvirt__tunnel_port => '31247',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-fc3-1:fp13
@@ -16836,9 +16881,9 @@ end
             :mac => "44:38:39:00:00:19",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20943',
+            :libvirt__tunnel_local_port => '30013',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21943',
+            :libvirt__tunnel_port => '31013',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-fc3-1:fp14
@@ -16846,9 +16891,9 @@ end
             :mac => "44:38:39:00:00:3e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20962',
+            :libvirt__tunnel_local_port => '30032',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21962',
+            :libvirt__tunnel_port => '31032',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-fc3-1:fp15
@@ -16856,9 +16901,9 @@ end
             :mac => "44:38:39:00:03:7b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21380',
+            :libvirt__tunnel_local_port => '30450',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22380',
+            :libvirt__tunnel_port => '31450',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-fc4-1:fp12
@@ -16866,9 +16911,9 @@ end
             :mac => "44:38:39:00:03:bf",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21414',
+            :libvirt__tunnel_local_port => '30484',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22414',
+            :libvirt__tunnel_port => '31484',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-fc4-1:fp13
@@ -16876,9 +16921,9 @@ end
             :mac => "44:38:39:00:01:4c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21098',
+            :libvirt__tunnel_local_port => '30168',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22098',
+            :libvirt__tunnel_port => '31168',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-fc4-1:fp14
@@ -16886,9 +16931,9 @@ end
             :mac => "44:38:39:00:03:d1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21423',
+            :libvirt__tunnel_local_port => '30493',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22423',
+            :libvirt__tunnel_port => '31493',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-fc4-1:fp15
@@ -16896,9 +16941,9 @@ end
             :mac => "44:38:39:00:01:84",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21126',
+            :libvirt__tunnel_local_port => '30196',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22126',
+            :libvirt__tunnel_port => '31196',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp4 --> leaf04:swp51
@@ -16906,9 +16951,9 @@ end
             :mac => "44:38:39:00:02:96",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22264',
+            :libvirt__tunnel_local_port => '31334',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21264',
+            :libvirt__tunnel_port => '30334',
             :libvirt__iface_name => 'swp4',
             auto_config: false
 
@@ -16936,8 +16981,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:b6 --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:b6", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:b8 --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:b8", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:c3 --> fp0"
@@ -17007,7 +17052,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:96 --> swp4"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:96", NAME="swp4", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -17023,9 +17068,9 @@ end
 
   ##### DEFINE VM for chassis01-lc3-1 #####
   config.vm.define "chassis01-lc3-1" do |device|
-
-    device.vm.hostname = "chassis01-lc3-1"
-
+    
+    device.vm.hostname = "chassis01-lc3-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -17038,14 +17083,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp56
+      # link for eth0 --> oob-mgmt-switch:swp57
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:b8",
+            :mac => "44:38:39:00:04:ba",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22541',
+            :libvirt__tunnel_local_port => '31612',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21541',
+            :libvirt__tunnel_port => '30612',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-fc1-1:fp16
@@ -17053,9 +17098,9 @@ end
             :mac => "44:38:39:00:03:61",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21367',
+            :libvirt__tunnel_local_port => '30437',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22367',
+            :libvirt__tunnel_port => '31437',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-fc1-1:fp17
@@ -17063,9 +17108,9 @@ end
             :mac => "44:38:39:00:00:f6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21055',
+            :libvirt__tunnel_local_port => '30125',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22055',
+            :libvirt__tunnel_port => '31125',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-fc1-1:fp18
@@ -17073,9 +17118,9 @@ end
             :mac => "44:38:39:00:03:d3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21424',
+            :libvirt__tunnel_local_port => '30494',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22424',
+            :libvirt__tunnel_port => '31494',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-fc1-1:fp19
@@ -17083,9 +17128,9 @@ end
             :mac => "44:38:39:00:03:4c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21356',
+            :libvirt__tunnel_local_port => '30426',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22356',
+            :libvirt__tunnel_port => '31426',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-fc2-1:fp16
@@ -17093,9 +17138,9 @@ end
             :mac => "44:38:39:00:01:8c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21130',
+            :libvirt__tunnel_local_port => '30200',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22130',
+            :libvirt__tunnel_port => '31200',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-fc2-1:fp17
@@ -17103,9 +17148,9 @@ end
             :mac => "44:38:39:00:02:45",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21223',
+            :libvirt__tunnel_local_port => '30293',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22223',
+            :libvirt__tunnel_port => '31293',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-fc2-1:fp18
@@ -17113,9 +17158,9 @@ end
             :mac => "44:38:39:00:01:0a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21065',
+            :libvirt__tunnel_local_port => '30135',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22065',
+            :libvirt__tunnel_port => '31135',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-fc2-1:fp19
@@ -17123,9 +17168,9 @@ end
             :mac => "44:38:39:00:00:b4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21022',
+            :libvirt__tunnel_local_port => '30092',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22022',
+            :libvirt__tunnel_port => '31092',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-fc3-1:fp16
@@ -17133,9 +17178,9 @@ end
             :mac => "44:38:39:00:00:2f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20954',
+            :libvirt__tunnel_local_port => '30024',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21954',
+            :libvirt__tunnel_port => '31024',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-fc3-1:fp17
@@ -17143,9 +17188,9 @@ end
             :mac => "44:38:39:00:00:3a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20960',
+            :libvirt__tunnel_local_port => '30030',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21960',
+            :libvirt__tunnel_port => '31030',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-fc3-1:fp18
@@ -17153,9 +17198,9 @@ end
             :mac => "44:38:39:00:03:71",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21375',
+            :libvirt__tunnel_local_port => '30445',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22375',
+            :libvirt__tunnel_port => '31445',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-fc3-1:fp19
@@ -17163,9 +17208,9 @@ end
             :mac => "44:38:39:00:02:9f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21269',
+            :libvirt__tunnel_local_port => '30339',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22269',
+            :libvirt__tunnel_port => '31339',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-fc4-1:fp16
@@ -17173,9 +17218,9 @@ end
             :mac => "44:38:39:00:02:b3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21279',
+            :libvirt__tunnel_local_port => '30349',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22279',
+            :libvirt__tunnel_port => '31349',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-fc4-1:fp17
@@ -17183,9 +17228,9 @@ end
             :mac => "44:38:39:00:00:fe",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21059',
+            :libvirt__tunnel_local_port => '30129',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22059',
+            :libvirt__tunnel_port => '31129',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-fc4-1:fp18
@@ -17193,9 +17238,9 @@ end
             :mac => "44:38:39:00:00:03",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20932',
+            :libvirt__tunnel_local_port => '30002',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21932',
+            :libvirt__tunnel_port => '31002',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-fc4-1:fp19
@@ -17203,9 +17248,9 @@ end
             :mac => "44:38:39:00:04:2c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21470',
+            :libvirt__tunnel_local_port => '30540',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22470',
+            :libvirt__tunnel_port => '31540',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp5 --> leaf05:swp51
@@ -17213,9 +17258,9 @@ end
             :mac => "44:38:39:00:00:a0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22011',
+            :libvirt__tunnel_local_port => '31081',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21011',
+            :libvirt__tunnel_port => '30081',
             :libvirt__iface_name => 'swp5',
             auto_config: false
 
@@ -17243,8 +17288,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:b8 --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:b8", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:ba --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:ba", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:61 --> fp0"
@@ -17314,7 +17359,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:a0 --> swp5"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:a0", NAME="swp5", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -17330,9 +17375,9 @@ end
 
   ##### DEFINE VM for chassis01-lc3-2 #####
   config.vm.define "chassis01-lc3-2" do |device|
-
-    device.vm.hostname = "chassis01-lc3-2"
-
+    
+    device.vm.hostname = "chassis01-lc3-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -17345,14 +17390,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp57
+      # link for eth0 --> oob-mgmt-switch:swp58
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:ba",
+            :mac => "44:38:39:00:04:bc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22542',
+            :libvirt__tunnel_local_port => '31613',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21542',
+            :libvirt__tunnel_port => '30613',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis01-fc1-1:fp20
@@ -17360,9 +17405,9 @@ end
             :mac => "44:38:39:00:03:a5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21401',
+            :libvirt__tunnel_local_port => '30471',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22401',
+            :libvirt__tunnel_port => '31471',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis01-fc1-1:fp21
@@ -17370,9 +17415,9 @@ end
             :mac => "44:38:39:00:02:e1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21302',
+            :libvirt__tunnel_local_port => '30372',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22302',
+            :libvirt__tunnel_port => '31372',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis01-fc1-1:fp22
@@ -17380,9 +17425,9 @@ end
             :mac => "44:38:39:00:02:6c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21243',
+            :libvirt__tunnel_local_port => '30313',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22243',
+            :libvirt__tunnel_port => '31313',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis01-fc1-1:fp23
@@ -17390,9 +17435,9 @@ end
             :mac => "44:38:39:00:00:48",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20967',
+            :libvirt__tunnel_local_port => '30037',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21967',
+            :libvirt__tunnel_port => '31037',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis01-fc2-1:fp20
@@ -17400,9 +17445,9 @@ end
             :mac => "44:38:39:00:00:8b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21001',
+            :libvirt__tunnel_local_port => '30071',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22001',
+            :libvirt__tunnel_port => '31071',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis01-fc2-1:fp21
@@ -17410,9 +17455,9 @@ end
             :mac => "44:38:39:00:03:21",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21334',
+            :libvirt__tunnel_local_port => '30404',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22334',
+            :libvirt__tunnel_port => '31404',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis01-fc2-1:fp22
@@ -17420,9 +17465,9 @@ end
             :mac => "44:38:39:00:00:71",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20988',
+            :libvirt__tunnel_local_port => '30058',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21988',
+            :libvirt__tunnel_port => '31058',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis01-fc2-1:fp23
@@ -17430,9 +17475,9 @@ end
             :mac => "44:38:39:00:00:38",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20959',
+            :libvirt__tunnel_local_port => '30029',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21959',
+            :libvirt__tunnel_port => '31029',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis01-fc3-1:fp20
@@ -17440,9 +17485,9 @@ end
             :mac => "44:38:39:00:01:74",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21118',
+            :libvirt__tunnel_local_port => '30188',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22118',
+            :libvirt__tunnel_port => '31188',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis01-fc3-1:fp21
@@ -17450,9 +17495,9 @@ end
             :mac => "44:38:39:00:02:70",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21245',
+            :libvirt__tunnel_local_port => '30315',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22245',
+            :libvirt__tunnel_port => '31315',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis01-fc3-1:fp22
@@ -17460,9 +17505,9 @@ end
             :mac => "44:38:39:00:02:89",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21258',
+            :libvirt__tunnel_local_port => '30328',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22258',
+            :libvirt__tunnel_port => '31328',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis01-fc3-1:fp23
@@ -17470,9 +17515,9 @@ end
             :mac => "44:38:39:00:01:e2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21173',
+            :libvirt__tunnel_local_port => '30243',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22173',
+            :libvirt__tunnel_port => '31243',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis01-fc4-1:fp20
@@ -17480,9 +17525,9 @@ end
             :mac => "44:38:39:00:02:f3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21311',
+            :libvirt__tunnel_local_port => '30381',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22311',
+            :libvirt__tunnel_port => '31381',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis01-fc4-1:fp21
@@ -17490,9 +17535,9 @@ end
             :mac => "44:38:39:00:02:fd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21316',
+            :libvirt__tunnel_local_port => '30386',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22316',
+            :libvirt__tunnel_port => '31386',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis01-fc4-1:fp22
@@ -17500,9 +17545,9 @@ end
             :mac => "44:38:39:00:01:12",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21069',
+            :libvirt__tunnel_local_port => '30139',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22069',
+            :libvirt__tunnel_port => '31139',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis01-fc4-1:fp23
@@ -17510,9 +17555,9 @@ end
             :mac => "44:38:39:00:02:4f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21228',
+            :libvirt__tunnel_local_port => '30298',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22228',
+            :libvirt__tunnel_port => '31298',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for swp6 --> leaf06:swp51
@@ -17520,9 +17565,9 @@ end
             :mac => "44:38:39:00:01:bd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22154',
+            :libvirt__tunnel_local_port => '31224',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21154',
+            :libvirt__tunnel_port => '30224',
             :libvirt__iface_name => 'swp6',
             auto_config: false
 
@@ -17550,8 +17595,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:ba --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:ba", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:bc --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:bc", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:a5 --> fp0"
@@ -17621,7 +17666,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:bd --> swp6"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:bd", NAME="swp6", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -17637,9 +17682,9 @@ end
 
   ##### DEFINE VM for chassis02-fc4-1 #####
   config.vm.define "chassis02-fc4-1" do |device|
-
-    device.vm.hostname = "chassis02-fc4-1"
-
+    
+    device.vm.hostname = "chassis02-fc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -17652,14 +17697,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp58
+      # link for eth0 --> oob-mgmt-switch:swp59
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:bc",
+            :mac => "44:38:39:00:04:be",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22543',
+            :libvirt__tunnel_local_port => '31614',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21543',
+            :libvirt__tunnel_port => '30614',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis02-lc1-1:fp12
@@ -17667,9 +17712,9 @@ end
             :mac => "44:38:39:00:03:20",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22333',
+            :libvirt__tunnel_local_port => '31403',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21333',
+            :libvirt__tunnel_port => '30403',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis02-lc1-1:fp13
@@ -17677,9 +17722,9 @@ end
             :mac => "44:38:39:00:03:2c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22339',
+            :libvirt__tunnel_local_port => '31409',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21339',
+            :libvirt__tunnel_port => '30409',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis02-lc1-1:fp14
@@ -17687,9 +17732,9 @@ end
             :mac => "44:38:39:00:03:45",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22352',
+            :libvirt__tunnel_local_port => '31422',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21352',
+            :libvirt__tunnel_port => '30422',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis02-lc1-1:fp15
@@ -17697,9 +17742,9 @@ end
             :mac => "44:38:39:00:03:dd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22429',
+            :libvirt__tunnel_local_port => '31499',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21429',
+            :libvirt__tunnel_port => '30499',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis02-lc1-2:fp12
@@ -17707,9 +17752,9 @@ end
             :mac => "44:38:39:00:02:c2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22286',
+            :libvirt__tunnel_local_port => '31356',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21286',
+            :libvirt__tunnel_port => '30356',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis02-lc1-2:fp13
@@ -17717,9 +17762,9 @@ end
             :mac => "44:38:39:00:02:ea",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22306',
+            :libvirt__tunnel_local_port => '31376',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21306',
+            :libvirt__tunnel_port => '30376',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis02-lc1-2:fp14
@@ -17727,9 +17772,9 @@ end
             :mac => "44:38:39:00:03:92",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22391',
+            :libvirt__tunnel_local_port => '31461',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21391',
+            :libvirt__tunnel_port => '30461',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis02-lc1-2:fp15
@@ -17737,9 +17782,9 @@ end
             :mac => "44:38:39:00:03:47",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22353',
+            :libvirt__tunnel_local_port => '31423',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21353',
+            :libvirt__tunnel_port => '30423',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis02-lc2-1:fp12
@@ -17747,9 +17792,9 @@ end
             :mac => "44:38:39:00:00:26",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21949',
+            :libvirt__tunnel_local_port => '31019',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20949',
+            :libvirt__tunnel_port => '30019',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis02-lc2-1:fp13
@@ -17757,9 +17802,9 @@ end
             :mac => "44:38:39:00:02:b2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22278',
+            :libvirt__tunnel_local_port => '31348',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21278',
+            :libvirt__tunnel_port => '30348',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis02-lc2-1:fp14
@@ -17767,9 +17812,9 @@ end
             :mac => "44:38:39:00:02:38",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22216',
+            :libvirt__tunnel_local_port => '31286',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21216',
+            :libvirt__tunnel_port => '30286',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis02-lc2-1:fp15
@@ -17777,9 +17822,9 @@ end
             :mac => "44:38:39:00:01:f1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22180',
+            :libvirt__tunnel_local_port => '31250',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21180',
+            :libvirt__tunnel_port => '30250',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis02-lc2-2:fp12
@@ -17787,9 +17832,9 @@ end
             :mac => "44:38:39:00:03:66",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22369',
+            :libvirt__tunnel_local_port => '31439',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21369',
+            :libvirt__tunnel_port => '30439',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis02-lc2-2:fp13
@@ -17797,9 +17842,9 @@ end
             :mac => "44:38:39:00:03:cc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22420',
+            :libvirt__tunnel_local_port => '31490',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21420',
+            :libvirt__tunnel_port => '30490',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis02-lc2-2:fp14
@@ -17807,9 +17852,9 @@ end
             :mac => "44:38:39:00:04:12",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22456',
+            :libvirt__tunnel_local_port => '31526',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21456',
+            :libvirt__tunnel_port => '30526',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis02-lc2-2:fp15
@@ -17817,9 +17862,9 @@ end
             :mac => "44:38:39:00:02:6b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22242',
+            :libvirt__tunnel_local_port => '31312',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21242',
+            :libvirt__tunnel_port => '30312',
             :libvirt__iface_name => 'fp15',
             auto_config: false
       # link for fp16 --> chassis02-lc3-1:fp12
@@ -17827,9 +17872,9 @@ end
             :mac => "44:38:39:00:00:78",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21991',
+            :libvirt__tunnel_local_port => '31061',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20991',
+            :libvirt__tunnel_port => '30061',
             :libvirt__iface_name => 'fp16',
             auto_config: false
       # link for fp17 --> chassis02-lc3-1:fp13
@@ -17837,9 +17882,9 @@ end
             :mac => "44:38:39:00:01:09",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22064',
+            :libvirt__tunnel_local_port => '31134',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21064',
+            :libvirt__tunnel_port => '30134',
             :libvirt__iface_name => 'fp17',
             auto_config: false
       # link for fp18 --> chassis02-lc3-1:fp14
@@ -17847,9 +17892,9 @@ end
             :mac => "44:38:39:00:00:cb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22033',
+            :libvirt__tunnel_local_port => '31103',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21033',
+            :libvirt__tunnel_port => '30103',
             :libvirt__iface_name => 'fp18',
             auto_config: false
       # link for fp19 --> chassis02-lc3-1:fp15
@@ -17857,9 +17902,9 @@ end
             :mac => "44:38:39:00:03:0e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22324',
+            :libvirt__tunnel_local_port => '31394',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21324',
+            :libvirt__tunnel_port => '30394',
             :libvirt__iface_name => 'fp19',
             auto_config: false
       # link for fp20 --> chassis02-lc3-2:fp12
@@ -17867,9 +17912,9 @@ end
             :mac => "44:38:39:00:04:1b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22461',
+            :libvirt__tunnel_local_port => '31531',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21461',
+            :libvirt__tunnel_port => '30531',
             :libvirt__iface_name => 'fp20',
             auto_config: false
       # link for fp21 --> chassis02-lc3-2:fp13
@@ -17877,9 +17922,9 @@ end
             :mac => "44:38:39:00:03:00",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22317',
+            :libvirt__tunnel_local_port => '31387',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21317',
+            :libvirt__tunnel_port => '30387',
             :libvirt__iface_name => 'fp21',
             auto_config: false
       # link for fp22 --> chassis02-lc3-2:fp14
@@ -17887,9 +17932,9 @@ end
             :mac => "44:38:39:00:00:e3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22045',
+            :libvirt__tunnel_local_port => '31115',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21045',
+            :libvirt__tunnel_port => '30115',
             :libvirt__iface_name => 'fp22',
             auto_config: false
       # link for fp23 --> chassis02-lc3-2:fp15
@@ -17897,9 +17942,9 @@ end
             :mac => "44:38:39:00:00:8a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22000',
+            :libvirt__tunnel_local_port => '31070',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21000',
+            :libvirt__tunnel_port => '30070',
             :libvirt__iface_name => 'fp23',
             auto_config: false
       # link for fp24 --> chassis02-lc4-1:fp12
@@ -17907,9 +17952,9 @@ end
             :mac => "44:38:39:00:02:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22188',
+            :libvirt__tunnel_local_port => '31258',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21188',
+            :libvirt__tunnel_port => '30258',
             :libvirt__iface_name => 'fp24',
             auto_config: false
       # link for fp25 --> chassis02-lc4-1:fp13
@@ -17917,9 +17962,9 @@ end
             :mac => "44:38:39:00:03:7e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22381',
+            :libvirt__tunnel_local_port => '31451',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21381',
+            :libvirt__tunnel_port => '30451',
             :libvirt__iface_name => 'fp25',
             auto_config: false
       # link for fp26 --> chassis02-lc4-1:fp14
@@ -17927,9 +17972,9 @@ end
             :mac => "44:38:39:00:02:3e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22219',
+            :libvirt__tunnel_local_port => '31289',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21219',
+            :libvirt__tunnel_port => '30289',
             :libvirt__iface_name => 'fp26',
             auto_config: false
       # link for fp27 --> chassis02-lc4-1:fp15
@@ -17937,9 +17982,9 @@ end
             :mac => "44:38:39:00:00:56",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21974',
+            :libvirt__tunnel_local_port => '31044',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20974',
+            :libvirt__tunnel_port => '30044',
             :libvirt__iface_name => 'fp27',
             auto_config: false
       # link for fp28 --> chassis02-lc4-2:fp12
@@ -17947,9 +17992,9 @@ end
             :mac => "44:38:39:00:01:83",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22125',
+            :libvirt__tunnel_local_port => '31195',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21125',
+            :libvirt__tunnel_port => '30195',
             :libvirt__iface_name => 'fp28',
             auto_config: false
       # link for fp29 --> chassis02-lc4-2:fp13
@@ -17957,9 +18002,9 @@ end
             :mac => "44:38:39:00:03:08",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22321',
+            :libvirt__tunnel_local_port => '31391',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21321',
+            :libvirt__tunnel_port => '30391',
             :libvirt__iface_name => 'fp29',
             auto_config: false
       # link for fp30 --> chassis02-lc4-2:fp14
@@ -17967,9 +18012,9 @@ end
             :mac => "44:38:39:00:03:3d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22348',
+            :libvirt__tunnel_local_port => '31418',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21348',
+            :libvirt__tunnel_port => '30418',
             :libvirt__iface_name => 'fp30',
             auto_config: false
       # link for fp31 --> chassis02-lc4-2:fp15
@@ -17977,9 +18022,9 @@ end
             :mac => "44:38:39:00:01:45",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22094',
+            :libvirt__tunnel_local_port => '31164',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21094',
+            :libvirt__tunnel_port => '30164',
             :libvirt__iface_name => 'fp31',
             auto_config: false
 
@@ -18007,8 +18052,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:bc --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:bc", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:be --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:be", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:20 --> fp0"
@@ -18138,7 +18183,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:45 --> fp31"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:45", NAME="fp31", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -18154,9 +18199,9 @@ end
 
   ##### DEFINE VM for chassis04-lc4-1 #####
   config.vm.define "chassis04-lc4-1" do |device|
-
-    device.vm.hostname = "chassis04-lc4-1"
-
+    
+    device.vm.hostname = "chassis04-lc4-1" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -18169,14 +18214,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp59
+      # link for eth0 --> oob-mgmt-switch:swp60
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:be",
+            :mac => "44:38:39:00:04:c0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22544',
+            :libvirt__tunnel_local_port => '31615',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21544',
+            :libvirt__tunnel_port => '30615',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-fc1-1:fp24
@@ -18184,9 +18229,9 @@ end
             :mac => "44:38:39:00:01:72",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21117',
+            :libvirt__tunnel_local_port => '30187',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22117',
+            :libvirt__tunnel_port => '31187',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-fc1-1:fp25
@@ -18194,9 +18239,9 @@ end
             :mac => "44:38:39:00:01:18",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21072',
+            :libvirt__tunnel_local_port => '30142',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22072',
+            :libvirt__tunnel_port => '31142',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-fc1-1:fp26
@@ -18204,9 +18249,9 @@ end
             :mac => "44:38:39:00:03:13",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21327',
+            :libvirt__tunnel_local_port => '30397',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22327',
+            :libvirt__tunnel_port => '31397',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-fc1-1:fp27
@@ -18214,9 +18259,9 @@ end
             :mac => "44:38:39:00:00:b6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21023',
+            :libvirt__tunnel_local_port => '30093',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22023',
+            :libvirt__tunnel_port => '31093',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-fc2-1:fp24
@@ -18224,9 +18269,9 @@ end
             :mac => "44:38:39:00:01:c6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21159',
+            :libvirt__tunnel_local_port => '30229',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22159',
+            :libvirt__tunnel_port => '31229',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-fc2-1:fp25
@@ -18234,9 +18279,9 @@ end
             :mac => "44:38:39:00:04:28",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21468',
+            :libvirt__tunnel_local_port => '30538',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22468',
+            :libvirt__tunnel_port => '31538',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-fc2-1:fp26
@@ -18244,9 +18289,9 @@ end
             :mac => "44:38:39:00:03:c5",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21417',
+            :libvirt__tunnel_local_port => '30487',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22417',
+            :libvirt__tunnel_port => '31487',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-fc2-1:fp27
@@ -18254,9 +18299,9 @@ end
             :mac => "44:38:39:00:00:a1",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21012',
+            :libvirt__tunnel_local_port => '30082',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22012',
+            :libvirt__tunnel_port => '31082',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-fc3-1:fp24
@@ -18264,9 +18309,9 @@ end
             :mac => "44:38:39:00:02:53",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21230',
+            :libvirt__tunnel_local_port => '30300',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22230',
+            :libvirt__tunnel_port => '31300',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-fc3-1:fp25
@@ -18274,9 +18319,9 @@ end
             :mac => "44:38:39:00:02:18",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21200',
+            :libvirt__tunnel_local_port => '30270',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22200',
+            :libvirt__tunnel_port => '31270',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-fc3-1:fp26
@@ -18284,9 +18329,9 @@ end
             :mac => "44:38:39:00:03:e0",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21431',
+            :libvirt__tunnel_local_port => '30501',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22431',
+            :libvirt__tunnel_port => '31501',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-fc3-1:fp27
@@ -18294,9 +18339,9 @@ end
             :mac => "44:38:39:00:00:ec",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21050',
+            :libvirt__tunnel_local_port => '30120',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22050',
+            :libvirt__tunnel_port => '31120',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-fc4-1:fp24
@@ -18304,9 +18349,9 @@ end
             :mac => "44:38:39:00:01:7a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21121',
+            :libvirt__tunnel_local_port => '30191',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22121',
+            :libvirt__tunnel_port => '31191',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-fc4-1:fp25
@@ -18314,9 +18359,9 @@ end
             :mac => "44:38:39:00:01:5e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21107',
+            :libvirt__tunnel_local_port => '30177',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22107',
+            :libvirt__tunnel_port => '31177',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-fc4-1:fp26
@@ -18324,9 +18369,9 @@ end
             :mac => "44:38:39:00:02:b7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21281',
+            :libvirt__tunnel_local_port => '30351',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22281',
+            :libvirt__tunnel_port => '31351',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-fc4-1:fp27
@@ -18334,9 +18379,9 @@ end
             :mac => "44:38:39:00:02:2b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21210',
+            :libvirt__tunnel_local_port => '30280',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22210',
+            :libvirt__tunnel_port => '31280',
             :libvirt__iface_name => 'fp15',
             auto_config: false
 
@@ -18364,8 +18409,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:be --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:be", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:c0 --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:c0", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:72 --> fp0"
@@ -18431,7 +18476,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:2b --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:2b", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -18447,9 +18492,9 @@ end
 
   ##### DEFINE VM for chassis04-lc4-2 #####
   config.vm.define "chassis04-lc4-2" do |device|
-
-    device.vm.hostname = "chassis04-lc4-2"
-
+    
+    device.vm.hostname = "chassis04-lc4-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -18462,14 +18507,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp60
+      # link for eth0 --> oob-mgmt-switch:swp61
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:c0",
+            :mac => "44:38:39:00:04:c2",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22545',
+            :libvirt__tunnel_local_port => '31616',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21545',
+            :libvirt__tunnel_port => '30616',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis04-fc1-1:fp28
@@ -18477,9 +18522,9 @@ end
             :mac => "44:38:39:00:00:91",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21004',
+            :libvirt__tunnel_local_port => '30074',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22004',
+            :libvirt__tunnel_port => '31074',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis04-fc1-1:fp29
@@ -18487,9 +18532,9 @@ end
             :mac => "44:38:39:00:01:10",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21068',
+            :libvirt__tunnel_local_port => '30138',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22068',
+            :libvirt__tunnel_port => '31138',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis04-fc1-1:fp30
@@ -18497,9 +18542,9 @@ end
             :mac => "44:38:39:00:01:1c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21074',
+            :libvirt__tunnel_local_port => '30144',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22074',
+            :libvirt__tunnel_port => '31144',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis04-fc1-1:fp31
@@ -18507,9 +18552,9 @@ end
             :mac => "44:38:39:00:03:c9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21419',
+            :libvirt__tunnel_local_port => '30489',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22419',
+            :libvirt__tunnel_port => '31489',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis04-fc2-1:fp28
@@ -18517,9 +18562,9 @@ end
             :mac => "44:38:39:00:00:4e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20970',
+            :libvirt__tunnel_local_port => '30040',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21970',
+            :libvirt__tunnel_port => '31040',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis04-fc2-1:fp29
@@ -18527,9 +18572,9 @@ end
             :mac => "44:38:39:00:03:52",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21359',
+            :libvirt__tunnel_local_port => '30429',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22359',
+            :libvirt__tunnel_port => '31429',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis04-fc2-1:fp30
@@ -18537,9 +18582,9 @@ end
             :mac => "44:38:39:00:04:3c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21478',
+            :libvirt__tunnel_local_port => '30548',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22478',
+            :libvirt__tunnel_port => '31548',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis04-fc2-1:fp31
@@ -18547,9 +18592,9 @@ end
             :mac => "44:38:39:00:04:13",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21457',
+            :libvirt__tunnel_local_port => '30527',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22457',
+            :libvirt__tunnel_port => '31527',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis04-fc3-1:fp28
@@ -18557,9 +18602,9 @@ end
             :mac => "44:38:39:00:00:15",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20941',
+            :libvirt__tunnel_local_port => '30011',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21941',
+            :libvirt__tunnel_port => '31011',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis04-fc3-1:fp29
@@ -18567,9 +18612,9 @@ end
             :mac => "44:38:39:00:02:a9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21274',
+            :libvirt__tunnel_local_port => '30344',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22274',
+            :libvirt__tunnel_port => '31344',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis04-fc3-1:fp30
@@ -18577,9 +18622,9 @@ end
             :mac => "44:38:39:00:04:32",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21473',
+            :libvirt__tunnel_local_port => '30543',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22473',
+            :libvirt__tunnel_port => '31543',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis04-fc3-1:fp31
@@ -18587,9 +18632,9 @@ end
             :mac => "44:38:39:00:01:a8",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21144',
+            :libvirt__tunnel_local_port => '30214',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22144',
+            :libvirt__tunnel_port => '31214',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis04-fc4-1:fp28
@@ -18597,9 +18642,9 @@ end
             :mac => "44:38:39:00:02:d7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21297',
+            :libvirt__tunnel_local_port => '30367',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22297',
+            :libvirt__tunnel_port => '31367',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis04-fc4-1:fp29
@@ -18607,9 +18652,9 @@ end
             :mac => "44:38:39:00:01:b4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21150',
+            :libvirt__tunnel_local_port => '30220',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22150',
+            :libvirt__tunnel_port => '31220',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis04-fc4-1:fp30
@@ -18617,9 +18662,9 @@ end
             :mac => "44:38:39:00:00:13",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20940',
+            :libvirt__tunnel_local_port => '30010',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21940',
+            :libvirt__tunnel_port => '31010',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis04-fc4-1:fp31
@@ -18627,9 +18672,9 @@ end
             :mac => "44:38:39:00:01:1a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21073',
+            :libvirt__tunnel_local_port => '30143',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22073',
+            :libvirt__tunnel_port => '31143',
             :libvirt__iface_name => 'fp15',
             auto_config: false
 
@@ -18657,8 +18702,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:c0 --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:c0", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:c2 --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:c2", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:91 --> fp0"
@@ -18724,7 +18769,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:1a --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:1a", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -18740,9 +18785,9 @@ end
 
   ##### DEFINE VM for chassis03-lc4-2 #####
   config.vm.define "chassis03-lc4-2" do |device|
-
-    device.vm.hostname = "chassis03-lc4-2"
-
+    
+    device.vm.hostname = "chassis03-lc4-2" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -18755,14 +18800,14 @@ end
 
 
     # NETWORK INTERFACES
-      # link for eth0 --> oob-mgmt-switch:swp61
+      # link for eth0 --> oob-mgmt-switch:swp62
       device.vm.network "private_network",
-            :mac => "44:38:39:00:04:c2",
+            :mac => "44:38:39:00:04:c4",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22546',
+            :libvirt__tunnel_local_port => '31617',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21546',
+            :libvirt__tunnel_port => '30617',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for fp0 --> chassis03-fc1-1:fp28
@@ -18770,9 +18815,9 @@ end
             :mac => "44:38:39:00:01:3a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21089',
+            :libvirt__tunnel_local_port => '30159',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22089',
+            :libvirt__tunnel_port => '31159',
             :libvirt__iface_name => 'fp0',
             auto_config: false
       # link for fp1 --> chassis03-fc1-1:fp29
@@ -18780,9 +18825,9 @@ end
             :mac => "44:38:39:00:02:1c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21202',
+            :libvirt__tunnel_local_port => '30272',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22202',
+            :libvirt__tunnel_port => '31272',
             :libvirt__iface_name => 'fp1',
             auto_config: false
       # link for fp2 --> chassis03-fc1-1:fp30
@@ -18790,9 +18835,9 @@ end
             :mac => "44:38:39:00:02:e3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21303',
+            :libvirt__tunnel_local_port => '30373',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22303',
+            :libvirt__tunnel_port => '31373',
             :libvirt__iface_name => 'fp2',
             auto_config: false
       # link for fp3 --> chassis03-fc1-1:fp31
@@ -18800,9 +18845,9 @@ end
             :mac => "44:38:39:00:00:7d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20994',
+            :libvirt__tunnel_local_port => '30064',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21994',
+            :libvirt__tunnel_port => '31064',
             :libvirt__iface_name => 'fp3',
             auto_config: false
       # link for fp4 --> chassis03-fc2-1:fp28
@@ -18810,9 +18855,9 @@ end
             :mac => "44:38:39:00:01:14",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21070',
+            :libvirt__tunnel_local_port => '30140',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22070',
+            :libvirt__tunnel_port => '31140',
             :libvirt__iface_name => 'fp4',
             auto_config: false
       # link for fp5 --> chassis03-fc2-1:fp29
@@ -18820,9 +18865,9 @@ end
             :mac => "44:38:39:00:01:32",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21085',
+            :libvirt__tunnel_local_port => '30155',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22085',
+            :libvirt__tunnel_port => '31155',
             :libvirt__iface_name => 'fp5',
             auto_config: false
       # link for fp6 --> chassis03-fc2-1:fp30
@@ -18830,9 +18875,9 @@ end
             :mac => "44:38:39:00:02:ef",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21309',
+            :libvirt__tunnel_local_port => '30379',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22309',
+            :libvirt__tunnel_port => '31379',
             :libvirt__iface_name => 'fp6',
             auto_config: false
       # link for fp7 --> chassis03-fc2-1:fp31
@@ -18840,9 +18885,9 @@ end
             :mac => "44:38:39:00:00:4a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20968',
+            :libvirt__tunnel_local_port => '30038',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21968',
+            :libvirt__tunnel_port => '31038',
             :libvirt__iface_name => 'fp7',
             auto_config: false
       # link for fp8 --> chassis03-fc3-1:fp28
@@ -18850,9 +18895,9 @@ end
             :mac => "44:38:39:00:02:bd",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21284',
+            :libvirt__tunnel_local_port => '30354',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22284',
+            :libvirt__tunnel_port => '31354',
             :libvirt__iface_name => 'fp8',
             auto_config: false
       # link for fp9 --> chassis03-fc3-1:fp29
@@ -18860,9 +18905,9 @@ end
             :mac => "44:38:39:00:03:17",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21329',
+            :libvirt__tunnel_local_port => '30399',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22329',
+            :libvirt__tunnel_port => '31399',
             :libvirt__iface_name => 'fp9',
             auto_config: false
       # link for fp10 --> chassis03-fc3-1:fp30
@@ -18870,9 +18915,9 @@ end
             :mac => "44:38:39:00:01:28",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21080',
+            :libvirt__tunnel_local_port => '30150',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22080',
+            :libvirt__tunnel_port => '31150',
             :libvirt__iface_name => 'fp10',
             auto_config: false
       # link for fp11 --> chassis03-fc3-1:fp31
@@ -18880,9 +18925,9 @@ end
             :mac => "44:38:39:00:00:1d",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20945',
+            :libvirt__tunnel_local_port => '30015',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21945',
+            :libvirt__tunnel_port => '31015',
             :libvirt__iface_name => 'fp11',
             auto_config: false
       # link for fp12 --> chassis03-fc4-1:fp28
@@ -18890,9 +18935,9 @@ end
             :mac => "44:38:39:00:02:f9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21314',
+            :libvirt__tunnel_local_port => '30384',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22314',
+            :libvirt__tunnel_port => '31384',
             :libvirt__iface_name => 'fp12',
             auto_config: false
       # link for fp13 --> chassis03-fc4-1:fp29
@@ -18900,9 +18945,9 @@ end
             :mac => "44:38:39:00:01:48",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21096',
+            :libvirt__tunnel_local_port => '30166',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22096',
+            :libvirt__tunnel_port => '31166',
             :libvirt__iface_name => 'fp13',
             auto_config: false
       # link for fp14 --> chassis03-fc4-1:fp30
@@ -18910,9 +18955,9 @@ end
             :mac => "44:38:39:00:01:aa",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21145',
+            :libvirt__tunnel_local_port => '30215',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22145',
+            :libvirt__tunnel_port => '31215',
             :libvirt__iface_name => 'fp14',
             auto_config: false
       # link for fp15 --> chassis03-fc4-1:fp31
@@ -18920,9 +18965,9 @@ end
             :mac => "44:38:39:00:00:57",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20975',
+            :libvirt__tunnel_local_port => '30045',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21975',
+            :libvirt__tunnel_port => '31045',
             :libvirt__iface_name => 'fp15',
             auto_config: false
 
@@ -18950,8 +18995,8 @@ rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
 delete_udev_directory
 
 device.vm.provision :shell , :inline => <<-udev_rule
-echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:c2 --> eth0"
-echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:c2", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:c4 --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:c4", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
      device.vm.provision :shell , :inline => <<-udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:3a --> fp0"
@@ -19017,7 +19062,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:57 --> fp15"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:57", NAME="fp15", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19033,9 +19078,9 @@ end
 
   ##### DEFINE VM for leaf06 #####
   config.vm.define "leaf06" do |device|
-
-    device.vm.hostname = "leaf06"
-
+    
+    device.vm.hostname = "leaf06" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19053,9 +19098,9 @@ end
             :mac => "44:38:39:00:04:90",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22521',
+            :libvirt__tunnel_local_port => '31591',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21521',
+            :libvirt__tunnel_port => '30591',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for swp1 --> server05:eth2
@@ -19063,9 +19108,9 @@ end
             :mac => "44:38:39:00:00:a9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22016',
+            :libvirt__tunnel_local_port => '31086',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21016',
+            :libvirt__tunnel_port => '30086',
             :libvirt__iface_name => 'swp1',
             auto_config: false
       # link for swp2 --> server06:eth2
@@ -19073,9 +19118,9 @@ end
             :mac => "44:38:39:00:00:33",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21956',
+            :libvirt__tunnel_local_port => '31026',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20956',
+            :libvirt__tunnel_port => '30026',
             :libvirt__iface_name => 'swp2',
             auto_config: false
       # link for swp49 --> leaf05:swp49
@@ -19083,9 +19128,9 @@ end
             :mac => "44:38:39:00:03:2a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22338',
+            :libvirt__tunnel_local_port => '31408',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21338',
+            :libvirt__tunnel_port => '30408',
             :libvirt__iface_name => 'swp49',
             auto_config: false
       # link for swp50 --> leaf05:swp50
@@ -19093,9 +19138,9 @@ end
             :mac => "44:38:39:00:00:68",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21983',
+            :libvirt__tunnel_local_port => '31053',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20983',
+            :libvirt__tunnel_port => '30053',
             :libvirt__iface_name => 'swp50',
             auto_config: false
       # link for swp51 --> chassis01-lc3-2:swp6
@@ -19103,9 +19148,9 @@ end
             :mac => "44:38:39:00:01:bc",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21154',
+            :libvirt__tunnel_local_port => '30224',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22154',
+            :libvirt__tunnel_port => '31224',
             :libvirt__iface_name => 'swp51',
             auto_config: false
       # link for swp52 --> chassis02-lc3-2:swp6
@@ -19113,9 +19158,9 @@ end
             :mac => "44:38:39:00:02:08",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21192',
+            :libvirt__tunnel_local_port => '30262',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22192',
+            :libvirt__tunnel_port => '31262',
             :libvirt__iface_name => 'swp52',
             auto_config: false
       # link for swp53 --> chassis03-lc3-2:swp6
@@ -19123,9 +19168,9 @@ end
             :mac => "44:38:39:00:03:f3",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21441',
+            :libvirt__tunnel_local_port => '30511',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22441',
+            :libvirt__tunnel_port => '31511',
             :libvirt__iface_name => 'swp53',
             auto_config: false
       # link for swp54 --> chassis04-lc3-2:swp6
@@ -19133,9 +19178,9 @@ end
             :mac => "44:38:39:00:03:79",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21379',
+            :libvirt__tunnel_local_port => '30449',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22379',
+            :libvirt__tunnel_port => '31449',
             :libvirt__iface_name => 'swp54',
             auto_config: false
 
@@ -19198,7 +19243,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:79 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:79", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19214,9 +19259,9 @@ end
 
   ##### DEFINE VM for leaf04 #####
   config.vm.define "leaf04" do |device|
-
-    device.vm.hostname = "leaf04"
-
+    
+    device.vm.hostname = "leaf04" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19234,9 +19279,9 @@ end
             :mac => "44:38:39:00:04:92",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22522',
+            :libvirt__tunnel_local_port => '31592',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21522',
+            :libvirt__tunnel_port => '30592',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for swp1 --> server03:eth2
@@ -19244,9 +19289,9 @@ end
             :mac => "44:38:39:00:02:59",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22233',
+            :libvirt__tunnel_local_port => '31303',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21233',
+            :libvirt__tunnel_port => '30303',
             :libvirt__iface_name => 'swp1',
             auto_config: false
       # link for swp2 --> server04:eth2
@@ -19254,9 +19299,9 @@ end
             :mac => "44:38:39:00:03:5e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22365',
+            :libvirt__tunnel_local_port => '31435',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21365',
+            :libvirt__tunnel_port => '30435',
             :libvirt__iface_name => 'swp2',
             auto_config: false
       # link for swp49 --> leaf03:swp49
@@ -19264,9 +19309,9 @@ end
             :mac => "44:38:39:00:04:23",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22465',
+            :libvirt__tunnel_local_port => '31535',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21465',
+            :libvirt__tunnel_port => '30535',
             :libvirt__iface_name => 'swp49',
             auto_config: false
       # link for swp50 --> leaf03:swp50
@@ -19274,9 +19319,9 @@ end
             :mac => "44:38:39:00:02:21",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22204',
+            :libvirt__tunnel_local_port => '31274',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21204',
+            :libvirt__tunnel_port => '30274',
             :libvirt__iface_name => 'swp50',
             auto_config: false
       # link for swp51 --> chassis01-lc2-2:swp4
@@ -19284,9 +19329,9 @@ end
             :mac => "44:38:39:00:02:95",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21264',
+            :libvirt__tunnel_local_port => '30334',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22264',
+            :libvirt__tunnel_port => '31334',
             :libvirt__iface_name => 'swp51',
             auto_config: false
       # link for swp52 --> chassis02-lc2-2:swp4
@@ -19294,9 +19339,9 @@ end
             :mac => "44:38:39:00:03:93",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21392',
+            :libvirt__tunnel_local_port => '30462',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22392',
+            :libvirt__tunnel_port => '31462',
             :libvirt__iface_name => 'swp52',
             auto_config: false
       # link for swp53 --> chassis03-lc2-2:swp4
@@ -19304,9 +19349,9 @@ end
             :mac => "44:38:39:00:04:26",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21467',
+            :libvirt__tunnel_local_port => '30537',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22467',
+            :libvirt__tunnel_port => '31537',
             :libvirt__iface_name => 'swp53',
             auto_config: false
       # link for swp54 --> chassis04-lc2-2:swp4
@@ -19314,9 +19359,9 @@ end
             :mac => "44:38:39:00:02:64",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21239',
+            :libvirt__tunnel_local_port => '30309',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22239',
+            :libvirt__tunnel_port => '31309',
             :libvirt__iface_name => 'swp54',
             auto_config: false
 
@@ -19379,7 +19424,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:02:64 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:02:64", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19395,9 +19440,9 @@ end
 
   ##### DEFINE VM for leaf05 #####
   config.vm.define "leaf05" do |device|
-
-    device.vm.hostname = "leaf05"
-
+    
+    device.vm.hostname = "leaf05" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19415,9 +19460,9 @@ end
             :mac => "44:38:39:00:04:94",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22523',
+            :libvirt__tunnel_local_port => '31593',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21523',
+            :libvirt__tunnel_port => '30593',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for swp1 --> server05:eth1
@@ -19425,9 +19470,9 @@ end
             :mac => "44:38:39:00:04:44",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22482',
+            :libvirt__tunnel_local_port => '31552',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21482',
+            :libvirt__tunnel_port => '30552',
             :libvirt__iface_name => 'swp1',
             auto_config: false
       # link for swp2 --> server06:eth1
@@ -19435,9 +19480,9 @@ end
             :mac => "44:38:39:00:03:ea",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22436',
+            :libvirt__tunnel_local_port => '31506',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21436',
+            :libvirt__tunnel_port => '30506',
             :libvirt__iface_name => 'swp2',
             auto_config: false
       # link for swp49 --> leaf06:swp49
@@ -19445,9 +19490,9 @@ end
             :mac => "44:38:39:00:03:29",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21338',
+            :libvirt__tunnel_local_port => '30408',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22338',
+            :libvirt__tunnel_port => '31408',
             :libvirt__iface_name => 'swp49',
             auto_config: false
       # link for swp50 --> leaf06:swp50
@@ -19455,9 +19500,9 @@ end
             :mac => "44:38:39:00:00:67",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20983',
+            :libvirt__tunnel_local_port => '30053',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21983',
+            :libvirt__tunnel_port => '31053',
             :libvirt__iface_name => 'swp50',
             auto_config: false
       # link for swp51 --> chassis01-lc3-1:swp5
@@ -19465,9 +19510,9 @@ end
             :mac => "44:38:39:00:00:9f",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21011',
+            :libvirt__tunnel_local_port => '30081',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22011',
+            :libvirt__tunnel_port => '31081',
             :libvirt__iface_name => 'swp51',
             auto_config: false
       # link for swp52 --> chassis02-lc3-1:swp5
@@ -19475,9 +19520,9 @@ end
             :mac => "44:38:39:00:03:d7",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21426',
+            :libvirt__tunnel_local_port => '30496',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22426',
+            :libvirt__tunnel_port => '31496',
             :libvirt__iface_name => 'swp52',
             auto_config: false
       # link for swp53 --> chassis03-lc3-1:swp5
@@ -19485,9 +19530,9 @@ end
             :mac => "44:38:39:00:01:24",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21078',
+            :libvirt__tunnel_local_port => '30148',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22078',
+            :libvirt__tunnel_port => '31148',
             :libvirt__iface_name => 'swp53',
             auto_config: false
       # link for swp54 --> chassis04-lc3-1:swp5
@@ -19495,9 +19540,9 @@ end
             :mac => "44:38:39:00:01:be",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21155',
+            :libvirt__tunnel_local_port => '30225',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22155',
+            :libvirt__tunnel_port => '31225',
             :libvirt__iface_name => 'swp54',
             auto_config: false
 
@@ -19560,7 +19605,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:be --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:be", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19576,9 +19621,9 @@ end
 
   ##### DEFINE VM for leaf02 #####
   config.vm.define "leaf02" do |device|
-
-    device.vm.hostname = "leaf02"
-
+    
+    device.vm.hostname = "leaf02" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19596,9 +19641,9 @@ end
             :mac => "44:38:39:00:04:96",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22524',
+            :libvirt__tunnel_local_port => '31594',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21524',
+            :libvirt__tunnel_port => '30594',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for swp1 --> server01:eth2
@@ -19606,9 +19651,9 @@ end
             :mac => "44:38:39:00:04:19",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22460',
+            :libvirt__tunnel_local_port => '31530',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21460',
+            :libvirt__tunnel_port => '30530',
             :libvirt__iface_name => 'swp1',
             auto_config: false
       # link for swp2 --> server02:eth2
@@ -19616,9 +19661,9 @@ end
             :mac => "44:38:39:00:00:50",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21971',
+            :libvirt__tunnel_local_port => '31041',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20971',
+            :libvirt__tunnel_port => '30041',
             :libvirt__iface_name => 'swp2',
             auto_config: false
       # link for swp49 --> leaf01:swp49
@@ -19626,9 +19671,9 @@ end
             :mac => "44:38:39:00:00:0c",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21936',
+            :libvirt__tunnel_local_port => '31006',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20936',
+            :libvirt__tunnel_port => '30006',
             :libvirt__iface_name => 'swp49',
             auto_config: false
       # link for swp50 --> leaf01:swp50
@@ -19636,9 +19681,9 @@ end
             :mac => "44:38:39:00:00:45",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21965',
+            :libvirt__tunnel_local_port => '31035',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '20965',
+            :libvirt__tunnel_port => '30035',
             :libvirt__iface_name => 'swp50',
             auto_config: false
       # link for swp51 --> chassis01-lc1-2:swp2
@@ -19646,9 +19691,9 @@ end
             :mac => "44:38:39:00:04:24",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21466',
+            :libvirt__tunnel_local_port => '30536',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22466',
+            :libvirt__tunnel_port => '31536',
             :libvirt__iface_name => 'swp51',
             auto_config: false
       # link for swp52 --> chassis02-lc1-2:swp2
@@ -19656,9 +19701,9 @@ end
             :mac => "44:38:39:00:00:29",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20951',
+            :libvirt__tunnel_local_port => '30021',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21951',
+            :libvirt__tunnel_port => '31021',
             :libvirt__iface_name => 'swp52',
             auto_config: false
       # link for swp53 --> chassis03-lc1-2:swp2
@@ -19666,9 +19711,9 @@ end
             :mac => "44:38:39:00:02:6e",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21244',
+            :libvirt__tunnel_local_port => '30314',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22244',
+            :libvirt__tunnel_port => '31314',
             :libvirt__iface_name => 'swp53',
             auto_config: false
       # link for swp54 --> chassis04-lc1-2:swp2
@@ -19676,9 +19721,9 @@ end
             :mac => "44:38:39:00:01:26",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21079',
+            :libvirt__tunnel_local_port => '30149',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22079',
+            :libvirt__tunnel_port => '31149',
             :libvirt__iface_name => 'swp54',
             auto_config: false
 
@@ -19741,7 +19786,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:01:26 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:01:26", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19757,9 +19802,9 @@ end
 
   ##### DEFINE VM for leaf03 #####
   config.vm.define "leaf03" do |device|
-
-    device.vm.hostname = "leaf03"
-
+    
+    device.vm.hostname = "leaf03" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19777,9 +19822,9 @@ end
             :mac => "44:38:39:00:04:98",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22525',
+            :libvirt__tunnel_local_port => '31595',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21525',
+            :libvirt__tunnel_port => '30595',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for swp1 --> server03:eth1
@@ -19787,9 +19832,9 @@ end
             :mac => "44:38:39:00:02:72",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22246',
+            :libvirt__tunnel_local_port => '31316',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21246',
+            :libvirt__tunnel_port => '30316',
             :libvirt__iface_name => 'swp1',
             auto_config: false
       # link for swp2 --> server04:eth1
@@ -19797,9 +19842,9 @@ end
             :mac => "44:38:39:00:03:db",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22428',
+            :libvirt__tunnel_local_port => '31498',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21428',
+            :libvirt__tunnel_port => '30498',
             :libvirt__iface_name => 'swp2',
             auto_config: false
       # link for swp49 --> leaf04:swp49
@@ -19807,9 +19852,9 @@ end
             :mac => "44:38:39:00:04:22",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21465',
+            :libvirt__tunnel_local_port => '30535',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22465',
+            :libvirt__tunnel_port => '31535',
             :libvirt__iface_name => 'swp49',
             auto_config: false
       # link for swp50 --> leaf04:swp50
@@ -19817,9 +19862,9 @@ end
             :mac => "44:38:39:00:02:20",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21204',
+            :libvirt__tunnel_local_port => '30274',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22204',
+            :libvirt__tunnel_port => '31274',
             :libvirt__iface_name => 'swp50',
             auto_config: false
       # link for swp51 --> chassis01-lc2-1:swp3
@@ -19827,9 +19872,9 @@ end
             :mac => "44:38:39:00:03:97",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21394',
+            :libvirt__tunnel_local_port => '30464',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22394',
+            :libvirt__tunnel_port => '31464',
             :libvirt__iface_name => 'swp51',
             auto_config: false
       # link for swp52 --> chassis02-lc2-1:swp3
@@ -19837,9 +19882,9 @@ end
             :mac => "44:38:39:00:00:17",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20942',
+            :libvirt__tunnel_local_port => '30012',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21942',
+            :libvirt__tunnel_port => '31012',
             :libvirt__iface_name => 'swp52',
             auto_config: false
       # link for swp53 --> chassis03-lc2-1:swp3
@@ -19847,9 +19892,9 @@ end
             :mac => "44:38:39:00:02:33",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21214',
+            :libvirt__tunnel_local_port => '30284',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22214',
+            :libvirt__tunnel_port => '31284',
             :libvirt__iface_name => 'swp53',
             auto_config: false
       # link for swp54 --> chassis04-lc2-1:swp3
@@ -19857,9 +19902,9 @@ end
             :mac => "44:38:39:00:03:d9",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21427',
+            :libvirt__tunnel_local_port => '30497',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22427',
+            :libvirt__tunnel_port => '31497',
             :libvirt__iface_name => 'swp54',
             auto_config: false
 
@@ -19922,7 +19967,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:03:d9 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:03:d9", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -19938,9 +19983,9 @@ end
 
   ##### DEFINE VM for leaf01 #####
   config.vm.define "leaf01" do |device|
-
-    device.vm.hostname = "leaf01"
-
+    
+    device.vm.hostname = "leaf01" 
+    
     device.vm.box = "CumulusCommunity/cumulus-vx"
     device.vm.box_version = "3.4.3"
 
@@ -19958,9 +20003,9 @@ end
             :mac => "44:38:39:00:04:9a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22526',
+            :libvirt__tunnel_local_port => '31596',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21526',
+            :libvirt__tunnel_port => '30596',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for swp1 --> server01:eth1
@@ -19968,9 +20013,9 @@ end
             :mac => "44:38:39:00:03:3b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22347',
+            :libvirt__tunnel_local_port => '31417',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21347',
+            :libvirt__tunnel_port => '30417',
             :libvirt__iface_name => 'swp1',
             auto_config: false
       # link for swp2 --> server02:eth1
@@ -19978,9 +20023,9 @@ end
             :mac => "44:38:39:00:02:26",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22207',
+            :libvirt__tunnel_local_port => '31277',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21207',
+            :libvirt__tunnel_port => '30277',
             :libvirt__iface_name => 'swp2',
             auto_config: false
       # link for swp49 --> leaf02:swp49
@@ -19988,9 +20033,9 @@ end
             :mac => "44:38:39:00:00:0b",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20936',
+            :libvirt__tunnel_local_port => '30006',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21936',
+            :libvirt__tunnel_port => '31006',
             :libvirt__iface_name => 'swp49',
             auto_config: false
       # link for swp50 --> leaf02:swp50
@@ -19998,9 +20043,9 @@ end
             :mac => "44:38:39:00:00:44",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20965',
+            :libvirt__tunnel_local_port => '30035',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21965',
+            :libvirt__tunnel_port => '31035',
             :libvirt__iface_name => 'swp50',
             auto_config: false
       # link for swp51 --> chassis01-lc1-1:swp1
@@ -20008,9 +20053,9 @@ end
             :mac => "44:38:39:00:01:30",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21084',
+            :libvirt__tunnel_local_port => '30154',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22084',
+            :libvirt__tunnel_port => '31154',
             :libvirt__iface_name => 'swp51',
             auto_config: false
       # link for swp52 --> chassis02-lc1-1:swp1
@@ -20018,9 +20063,9 @@ end
             :mac => "44:38:39:00:01:d6",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21167',
+            :libvirt__tunnel_local_port => '30237',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22167',
+            :libvirt__tunnel_port => '31237',
             :libvirt__iface_name => 'swp52',
             auto_config: false
       # link for swp53 --> chassis03-lc1-1:swp1
@@ -20028,9 +20073,9 @@ end
             :mac => "44:38:39:00:03:fb",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21445',
+            :libvirt__tunnel_local_port => '30515',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22445',
+            :libvirt__tunnel_port => '31515',
             :libvirt__iface_name => 'swp53',
             auto_config: false
       # link for swp54 --> chassis04-lc1-1:swp1
@@ -20038,9 +20083,9 @@ end
             :mac => "44:38:39:00:00:85",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20998',
+            :libvirt__tunnel_local_port => '30068',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21998',
+            :libvirt__tunnel_port => '31068',
             :libvirt__iface_name => 'swp54',
             auto_config: false
 
@@ -20103,7 +20148,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 44:38:39:00:00:85 --> swp54"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:00:85", NAME="swp54", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20119,13 +20164,13 @@ end
 
   ##### DEFINE VM for server01 #####
   config.vm.define "server01" do |device|
-
-    device.vm.hostname = "server01"
-
+    
+    device.vm.hostname = "server01" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20139,9 +20184,9 @@ end
             :mac => "44:38:39:00:04:64",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22499',
+            :libvirt__tunnel_local_port => '31569',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21499',
+            :libvirt__tunnel_port => '30569',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for eth1 --> leaf01:swp1
@@ -20149,9 +20194,9 @@ end
             :mac => "00:03:00:11:11:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21347',
+            :libvirt__tunnel_local_port => '30417',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22347',
+            :libvirt__tunnel_port => '31417',
             :libvirt__iface_name => 'eth1',
             auto_config: false
       # link for eth2 --> leaf02:swp1
@@ -20159,9 +20204,9 @@ end
             :mac => "00:03:00:11:11:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21460',
+            :libvirt__tunnel_local_port => '30530',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22460',
+            :libvirt__tunnel_port => '31530',
             :libvirt__iface_name => 'eth2',
             auto_config: false
 
@@ -20173,7 +20218,7 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
     device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
@@ -20199,7 +20244,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:11:11:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:11:11:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20215,13 +20260,13 @@ end
 
   ##### DEFINE VM for server03 #####
   config.vm.define "server03" do |device|
-
-    device.vm.hostname = "server03"
-
+    
+    device.vm.hostname = "server03" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20235,9 +20280,9 @@ end
             :mac => "44:38:39:00:04:66",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22500',
+            :libvirt__tunnel_local_port => '31570',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21500',
+            :libvirt__tunnel_port => '30570',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for eth1 --> leaf03:swp1
@@ -20245,9 +20290,9 @@ end
             :mac => "00:03:00:33:33:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21246',
+            :libvirt__tunnel_local_port => '30316',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22246',
+            :libvirt__tunnel_port => '31316',
             :libvirt__iface_name => 'eth1',
             auto_config: false
       # link for eth2 --> leaf04:swp1
@@ -20255,9 +20300,9 @@ end
             :mac => "00:03:00:33:33:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21233',
+            :libvirt__tunnel_local_port => '30303',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22233',
+            :libvirt__tunnel_port => '31303',
             :libvirt__iface_name => 'eth2',
             auto_config: false
 
@@ -20269,7 +20314,7 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
     device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
@@ -20295,7 +20340,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:33:33:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:33:33:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20311,13 +20356,13 @@ end
 
   ##### DEFINE VM for server02 #####
   config.vm.define "server02" do |device|
-
-    device.vm.hostname = "server02"
-
+    
+    device.vm.hostname = "server02" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20331,9 +20376,9 @@ end
             :mac => "44:38:39:00:04:68",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22501',
+            :libvirt__tunnel_local_port => '31571',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21501',
+            :libvirt__tunnel_port => '30571',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for eth1 --> leaf01:swp2
@@ -20341,9 +20386,9 @@ end
             :mac => "00:03:00:22:22:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21207',
+            :libvirt__tunnel_local_port => '30277',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22207',
+            :libvirt__tunnel_port => '31277',
             :libvirt__iface_name => 'eth1',
             auto_config: false
       # link for eth2 --> leaf02:swp2
@@ -20351,9 +20396,9 @@ end
             :mac => "00:03:00:22:22:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20971',
+            :libvirt__tunnel_local_port => '30041',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21971',
+            :libvirt__tunnel_port => '31041',
             :libvirt__iface_name => 'eth2',
             auto_config: false
 
@@ -20365,7 +20410,7 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
     device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
@@ -20391,7 +20436,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:22:22:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:22:22:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20407,13 +20452,13 @@ end
 
   ##### DEFINE VM for server05 #####
   config.vm.define "server05" do |device|
-
-    device.vm.hostname = "server05"
-
+    
+    device.vm.hostname = "server05" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20427,9 +20472,9 @@ end
             :mac => "44:38:39:00:04:6a",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22502',
+            :libvirt__tunnel_local_port => '31572',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21502',
+            :libvirt__tunnel_port => '30572',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for eth1 --> leaf05:swp1
@@ -20437,9 +20482,9 @@ end
             :mac => "00:03:00:55:55:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21482',
+            :libvirt__tunnel_local_port => '30552',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22482',
+            :libvirt__tunnel_port => '31552',
             :libvirt__iface_name => 'eth1',
             auto_config: false
       # link for eth2 --> leaf06:swp1
@@ -20447,9 +20492,9 @@ end
             :mac => "00:03:00:55:55:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21016',
+            :libvirt__tunnel_local_port => '30086',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22016',
+            :libvirt__tunnel_port => '31086',
             :libvirt__iface_name => 'eth2',
             auto_config: false
 
@@ -20461,7 +20506,7 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
     device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
@@ -20487,7 +20532,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:55:55:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:55:55:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20503,13 +20548,13 @@ end
 
   ##### DEFINE VM for server06 #####
   config.vm.define "server06" do |device|
-
-    device.vm.hostname = "server06"
-
+    
+    device.vm.hostname = "server06" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20523,9 +20568,9 @@ end
             :mac => "44:38:39:00:04:70",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22505',
+            :libvirt__tunnel_local_port => '31575',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21505',
+            :libvirt__tunnel_port => '30575',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for eth1 --> leaf05:swp2
@@ -20533,9 +20578,9 @@ end
             :mac => "00:03:00:66:66:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21436',
+            :libvirt__tunnel_local_port => '30506',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22436',
+            :libvirt__tunnel_port => '31506',
             :libvirt__iface_name => 'eth1',
             auto_config: false
       # link for eth2 --> leaf06:swp2
@@ -20543,9 +20588,9 @@ end
             :mac => "00:03:00:66:66:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '20956',
+            :libvirt__tunnel_local_port => '30026',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21956',
+            :libvirt__tunnel_port => '31026',
             :libvirt__iface_name => 'eth2',
             auto_config: false
 
@@ -20557,7 +20602,7 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
     device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
@@ -20583,7 +20628,7 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:66:66:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:66:66:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
-
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
@@ -20599,13 +20644,13 @@ end
 
   ##### DEFINE VM for server04 #####
   config.vm.define "server04" do |device|
-
-    device.vm.hostname = "server04"
-
+    
+    device.vm.hostname = "server04" 
+    
     device.vm.box = "yk0/ubuntu-xenial"
 
     device.vm.provider :libvirt do |v|
-      v.nic_model_type = 'e1000'
+      v.nic_model_type = 'e1000' 
       v.memory = 512
     end
     #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
@@ -20619,9 +20664,9 @@ end
             :mac => "44:38:39:00:04:82",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '22514',
+            :libvirt__tunnel_local_port => '31584',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '21514',
+            :libvirt__tunnel_port => '30584',
             :libvirt__iface_name => 'eth0',
             auto_config: false
       # link for eth1 --> leaf03:swp2
@@ -20629,9 +20674,9 @@ end
             :mac => "00:03:00:44:44:01",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21428',
+            :libvirt__tunnel_local_port => '30498',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22428',
+            :libvirt__tunnel_port => '31498',
             :libvirt__iface_name => 'eth1',
             auto_config: false
       # link for eth2 --> leaf04:swp2
@@ -20639,9 +20684,9 @@ end
             :mac => "00:03:00:44:44:02",
             :libvirt__tunnel_type => 'udp',
             :libvirt__tunnel_local_ip => '127.0.0.1',
-            :libvirt__tunnel_local_port => '21365',
+            :libvirt__tunnel_local_port => '30435',
             :libvirt__tunnel_ip => '127.0.0.1',
-            :libvirt__tunnel_port => '22365',
+            :libvirt__tunnel_port => '31435',
             :libvirt__iface_name => 'eth2',
             auto_config: false
 
@@ -20653,7 +20698,7 @@ end
     # Shorten Boot Process - Applies to Ubuntu Only - remove \"Wait for Network\"
     device.vm.provision :shell , inline: "sed -i 's/sleep [0-9]*/sleep 1/' /etc/init/failsafe.conf 2>/dev/null || true"
 
-
+    
     # Run the Config specified in the Node Attributes
     device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
     device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
@@ -20679,7 +20724,72 @@ udev_rule
 echo "  INFO: Adding UDEV Rule: 00:03:00:44:44:02 --> eth2"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="00:03:00:44:44:02", NAME="eth2", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
 udev_rule
+     
+      device.vm.provision :shell , :inline => <<-vagrant_interface_rule
+echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+echo "#### UDEV Rules (/etc/udev/rules.d/70-persistent-net.rules) ####"
+cat /etc/udev/rules.d/70-persistent-net.rules
+vagrant_interface_rule
 
+# Run Any Platform Specific Code and Apply the interface Re-map
+    #   (may or may not perform a reboot depending on platform)
+    device.vm.provision :shell , :inline => $script
+
+end
+
+  ##### DEFINE VM for netq-ts #####
+  config.vm.define "netq-ts" do |device|
+    
+    device.vm.hostname = "netq-ts" 
+    
+    device.vm.box = "cumulus/ts"
+
+    device.vm.provider :libvirt do |v|
+      v.nic_model_type = 'e1000' 
+      v.memory = 1024
+    end
+    #   see note here: https://github.com/pradels/vagrant-libvirt#synced-folders
+    device.vm.synced_folder ".", "/vagrant", disabled: true
+
+
+
+    # NETWORK INTERFACES
+      # link for eth0 --> oob-mgmt-switch:swp53
+      device.vm.network "private_network",
+            :mac => "44:38:39:00:04:b2",
+            :libvirt__tunnel_type => 'udp',
+            :libvirt__tunnel_local_ip => '127.0.0.1',
+            :libvirt__tunnel_local_port => '31608',
+            :libvirt__tunnel_ip => '127.0.0.1',
+            :libvirt__tunnel_port => '30608',
+            :libvirt__iface_name => 'eth0',
+            auto_config: false
+
+
+
+    # Fixes "stdin: is not a tty" and "mesg: ttyname failed : Inappropriate ioctl for device"  messages --> https://github.com/mitchellh/vagrant/issues/1673
+    device.vm.provision :shell , inline: "(sudo grep -q 'mesg n' /root/.profile 2>/dev/null && sudo sed -i '/mesg n/d' /root/.profile  2>/dev/null) || true;", privileged: false
+
+    
+    # Run the Config specified in the Node Attributes
+    device.vm.provision :shell , privileged: false, :inline => 'echo "$(whoami)" > /tmp/normal_user'
+    device.vm.provision :shell , path: "./helper_scripts/extra_server_config.sh"
+
+
+    # Install Rules for the interface re-map
+    device.vm.provision :shell , :inline => <<-delete_udev_directory
+if [ -d "/etc/udev/rules.d/70-persistent-net.rules" ]; then
+    rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
+fi
+rm -rfv /etc/udev/rules.d/70-persistent-net.rules &> /dev/null
+delete_udev_directory
+
+device.vm.provision :shell , :inline => <<-udev_rule
+echo "  INFO: Adding UDEV Rule: 44:38:39:00:04:b2 --> eth0"
+echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="44:38:39:00:04:b2", NAME="eth0", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules
+udev_rule
+     
       device.vm.provision :shell , :inline => <<-vagrant_interface_rule
 echo "  INFO: Adding UDEV Rule: Vagrant interface = vagrant"
 echo 'ACTION=="add", SUBSYSTEM=="net", ATTR{ifindex}=="2", NAME="vagrant", SUBSYSTEMS=="pci"' >> /etc/udev/rules.d/70-persistent-net.rules

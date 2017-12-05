@@ -166,7 +166,7 @@ chassis01-lc1-2,fp7,44:38:39:00:02:43
 chassis01-lc1-2,fp8,44:38:39:00:00:9d
 chassis01-lc1-2,fp9,44:38:39:00:01:c8
 chassis01-lc1-2,swp2,44:38:39:00:04:25
-chassis01-lc2-1,eth0,44:38:39:00:04:b2
+chassis01-lc2-1,eth0,44:38:39:00:04:b4
 chassis01-lc2-1,fp0,44:38:39:00:02:75
 chassis01-lc2-1,fp1,44:38:39:00:02:73
 chassis01-lc2-1,fp10,44:38:39:00:01:cc
@@ -184,7 +184,7 @@ chassis01-lc2-1,fp7,44:38:39:00:03:56
 chassis01-lc2-1,fp8,44:38:39:00:00:01
 chassis01-lc2-1,fp9,44:38:39:00:03:9d
 chassis01-lc2-1,swp3,44:38:39:00:03:98
-chassis01-lc2-2,eth0,44:38:39:00:04:b6
+chassis01-lc2-2,eth0,44:38:39:00:04:b8
 chassis01-lc2-2,fp0,44:38:39:00:03:c3
 chassis01-lc2-2,fp1,44:38:39:00:03:05
 chassis01-lc2-2,fp10,44:38:39:00:00:3e
@@ -202,7 +202,7 @@ chassis01-lc2-2,fp7,44:38:39:00:03:50
 chassis01-lc2-2,fp8,44:38:39:00:01:ea
 chassis01-lc2-2,fp9,44:38:39:00:00:19
 chassis01-lc2-2,swp4,44:38:39:00:02:96
-chassis01-lc3-1,eth0,44:38:39:00:04:b8
+chassis01-lc3-1,eth0,44:38:39:00:04:ba
 chassis01-lc3-1,fp0,44:38:39:00:03:61
 chassis01-lc3-1,fp1,44:38:39:00:00:f6
 chassis01-lc3-1,fp10,44:38:39:00:03:71
@@ -220,7 +220,7 @@ chassis01-lc3-1,fp7,44:38:39:00:00:b4
 chassis01-lc3-1,fp8,44:38:39:00:00:2f
 chassis01-lc3-1,fp9,44:38:39:00:00:3a
 chassis01-lc3-1,swp5,44:38:39:00:00:a0
-chassis01-lc3-2,eth0,44:38:39:00:04:ba
+chassis01-lc3-2,eth0,44:38:39:00:04:bc
 chassis01-lc3-2,fp0,44:38:39:00:03:a5
 chassis01-lc3-2,fp1,44:38:39:00:02:e1
 chassis01-lc3-2,fp10,44:38:39:00:02:89
@@ -371,7 +371,7 @@ chassis02-fc3-1,fp6,44:38:39:00:01:df
 chassis02-fc3-1,fp7,44:38:39:00:02:17
 chassis02-fc3-1,fp8,44:38:39:00:00:ab
 chassis02-fc3-1,fp9,44:38:39:00:02:da
-chassis02-fc4-1,eth0,44:38:39:00:04:bc
+chassis02-fc4-1,eth0,44:38:39:00:04:be
 chassis02-fc4-1,fp0,44:38:39:00:03:20
 chassis02-fc4-1,fp1,44:38:39:00:03:2c
 chassis02-fc4-1,fp10,44:38:39:00:02:38
@@ -786,7 +786,7 @@ chassis03-lc3-2,fp7,44:38:39:00:01:d8
 chassis03-lc3-2,fp8,44:38:39:00:03:48
 chassis03-lc3-2,fp9,44:38:39:00:02:60
 chassis03-lc3-2,swp6,44:38:39:00:03:f4
-chassis03-lc4-1,eth0,44:38:39:00:04:b4
+chassis03-lc4-1,eth0,44:38:39:00:04:b6
 chassis03-lc4-1,fp0,44:38:39:00:02:f5
 chassis03-lc4-1,fp1,44:38:39:00:00:da
 chassis03-lc4-1,fp10,44:38:39:00:00:75
@@ -803,7 +803,7 @@ chassis03-lc4-1,fp6,44:38:39:00:00:73
 chassis03-lc4-1,fp7,44:38:39:00:01:90
 chassis03-lc4-1,fp8,44:38:39:00:01:7e
 chassis03-lc4-1,fp9,44:38:39:00:02:7f
-chassis03-lc4-2,eth0,44:38:39:00:04:c2
+chassis03-lc4-2,eth0,44:38:39:00:04:c4
 chassis03-lc4-2,fp0,44:38:39:00:01:3a
 chassis03-lc4-2,fp1,44:38:39:00:02:1c
 chassis03-lc4-2,fp10,44:38:39:00:01:28
@@ -1060,7 +1060,7 @@ chassis04-lc3-2,fp7,44:38:39:00:02:dd
 chassis04-lc3-2,fp8,44:38:39:00:02:bf
 chassis04-lc3-2,fp9,44:38:39:00:02:10
 chassis04-lc3-2,swp6,44:38:39:00:03:7a
-chassis04-lc4-1,eth0,44:38:39:00:04:be
+chassis04-lc4-1,eth0,44:38:39:00:04:c0
 chassis04-lc4-1,fp0,44:38:39:00:01:72
 chassis04-lc4-1,fp1,44:38:39:00:01:18
 chassis04-lc4-1,fp10,44:38:39:00:03:e0
@@ -1077,7 +1077,7 @@ chassis04-lc4-1,fp6,44:38:39:00:03:c5
 chassis04-lc4-1,fp7,44:38:39:00:00:a1
 chassis04-lc4-1,fp8,44:38:39:00:02:53
 chassis04-lc4-1,fp9,44:38:39:00:02:18
-chassis04-lc4-2,eth0,44:38:39:00:04:c0
+chassis04-lc4-2,eth0,44:38:39:00:04:c2
 chassis04-lc4-2,fp0,44:38:39:00:00:91
 chassis04-lc4-2,fp1,44:38:39:00:01:10
 chassis04-lc4-2,fp10,44:38:39:00:04:32
@@ -1148,6 +1148,7 @@ leaf06,swp51,44:38:39:00:01:bc
 leaf06,swp52,44:38:39:00:02:08
 leaf06,swp53,44:38:39:00:03:f3
 leaf06,swp54,44:38:39:00:03:79
+netq-ts,eth0,44:38:39:00:04:b2
 oob-mgmt-server,eth1,44:38:39:00:04:4a
 oob-mgmt-switch,swp1,44:38:39:00:04:49
 oob-mgmt-switch,swp10,44:38:39:00:04:5b
@@ -1207,6 +1208,7 @@ oob-mgmt-switch,swp59,44:38:39:00:04:bd
 oob-mgmt-switch,swp6,44:38:39:00:04:53
 oob-mgmt-switch,swp60,44:38:39:00:04:bf
 oob-mgmt-switch,swp61,44:38:39:00:04:c1
+oob-mgmt-switch,swp62,44:38:39:00:04:c3
 oob-mgmt-switch,swp7,44:38:39:00:04:55
 oob-mgmt-switch,swp8,44:38:39:00:04:57
 oob-mgmt-switch,swp9,44:38:39:00:04:59

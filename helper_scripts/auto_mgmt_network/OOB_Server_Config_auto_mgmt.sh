@@ -45,7 +45,7 @@ install_puppet(){
 
 install_ansible(){
     echo " ### Installing Ansible... ###"
-    apt-get install -qy sshpass libssh-dev libffi-dev
+    apt-get install -qy ansible sshpass libssh-dev python-dev libssl-dev libffi-dev
     pip install pip --upgrade
     pip install setuptools --upgrade
     pip install ansible==$ansible_version --upgrade
@@ -76,42 +76,68 @@ chmod 755 /etc/motd
 
 echo " ### Overwriting /etc/network/interfaces ###"
 cat <<EOT > /etc/network/interfaces
-# The loopback network interface
 auto lo
 iface lo inet loopback
 
-# The primary network interface
-auto eth0
-iface eth0 inet dhcp
 
-auto swp1
-iface swp1
-  address 192.168.200.254/24
+auto vagrant
+iface vagrant inet dhcp
+
+
+auto eth1
+iface eth1 inet static
+    address 192.168.200.254/24
 EOT
-
-sudo ifreload -a
-
 
 echo " ### Overwriting DNS Server to 8.8.8.8 ###"
 #Required because the installation of DNSmasq throws off DNS momentarily
-echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+echo "nameserver 8.8.8.8" >> /etc/resolvconf/resolv.conf.d/head
 
 echo " ### Updating APT Repository... ###"
-echo 'deb http://deb.debian.org/debian/ oldstable main contrib non-free' | sudo tee -a /etc/apt/sources.list
-echo 'deb http://ppa.launchpad.net/ansible/ansible/ubuntu trusty main' | sudo tee -a /etc/apt/sources.list
-
-sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 93C4A3FD7BB9C367
 apt-get update -y
 
 echo " ### Installing Packages... ###"
-apt-get install -y ansible htop apache2 git dnsmasq apt-cacher-ng
+apt-get install -y htop isc-dhcp-server tree apache2 vlan git python-pip dnsmasq ifenslave apt-cacher-ng lldpd ntp
+modprobe 8021q
+#modprobe bonding
+echo "8021q" >> /etc/modules
 
+if [ $puppet -eq 1 ]; then
+    echo " ### Installing Puppet ### "
+    install_puppet
+fi
+if [ $ansible -eq 1 ]; then
+    echo " ### Installing Ansible ### "
+    install_ansible
+fi
+
+echo " ### Configure NTP... ###"
+echo <<EOT >> /etc/ntp.conf
+driftfile /var/lib/ntp/ntp.drift
+statistics loopstats peerstats clockstats
+filegen loopstats file loopstats type day enable
+filegen peerstats file peerstats type day enable
+filegen clockstats file clockstats type day enable
+
+server clock.rdu.cumulusnetworks.com
+
+# By default, exchange time with everybody, but don't allow configuration.
+restrict -4 default kod notrap nomodify nopeer noquery
+restrict -6 default kod notrap nomodify nopeer noquery
+
+# Local users may interrogate the ntp server more closely.
+restrict 127.0.0.1
+restrict ::1
+EOT
+
+echo " ### Creating cumulus user ###"
+useradd -m cumulus
 
 echo " ### Setting Up DHCP ###"
 mv /home/$username/dhcpd.conf /etc/dhcp/dhcpd.conf
 mv /home/$username/dhcpd.hosts /etc/dhcp/dhcpd.hosts
 chmod 755 -R /etc/dhcp/*
-systemctl start dhcpd.service
+systemctl restart isc-dhcp-server
 
 echo " ### Setting up ZTP ###"
 mv /home/$username/ztp_oob.sh /var/www/html/ztp_oob.sh
@@ -145,6 +171,8 @@ echo "cumulus ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/10_cumulus
 
 echo ' ### Setting UP NAT and Routing on MGMT server... ### '
 echo -e '#!/bin/bash \n/sbin/iptables -t nat -A POSTROUTING -o vagrant -j MASQUERADE' > /etc/rc.local
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/98-ipforward.conf
+
 
 echo " ### Creating turnup.sh script ###"
     cat <<EOT >> /home/cumulus/turnup.sh
@@ -170,9 +198,6 @@ fi
 
 chmod +x /home/cumulus/turnup.sh
 
-rm /home/cumulus/turnup.sh
-rm /home/cumulus/a
-
 echo " ### creating .gitconfig for cumulus user"
 cat <<EOT >> /home/cumulus/.gitconfig
 [push]
@@ -184,10 +209,6 @@ cat <<EOT >> /home/cumulus/.gitconfig
 [core]
     editor = vim
 EOT
-
-sed -i 's/users_with_edit = root, cumulus/users_with_edit = root, cumulus, vagrant/g' /etc/netd.conf
-sed -i 's/users_with_show = root, cumulus/users_with_show = root, cumulus, vagrant/g' /etc/netd.conf
-
 
 echo "############################################"
 echo "      DONE!"
