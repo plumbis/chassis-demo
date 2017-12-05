@@ -1,4 +1,4 @@
-vagrant up oob-mgmt-server oob-mgmt-switch
+vagrant up oob-mgmt-server oob-mgmt-switch ; vagrant up netq-ts
 vagrant up chassis01-lc1-1 chassis01-lc1-2 chassis01-lc2-1 chassis01-lc2-2 chassis01-lc3-1 chassis01-lc3-2 chassis01-lc4-1 chassis01-lc4-2  chassis01-fc1-1 chassis01-fc2-1 chassis01-fc3-1 chassis01-fc4-1
 vagrant up chassis02-lc1-1 chassis02-lc1-2 chassis02-lc2-1 chassis02-lc2-2 chassis02-lc3-1 chassis02-lc3-2 chassis02-lc4-1 chassis02-lc4-2 chassis02-fc1-1 chassis02-fc2-1 chassis02-fc3-1 chassis02-fc4-1
 vagrant up chassis03-lc1-1 chassis03-lc1-2 chassis03-lc2-1 chassis03-lc2-2 chassis03-lc3-1 chassis03-lc3-2 chassis03-lc4-1 chassis03-lc4-2 chassis03-fc1-1 chassis03-fc2-1 chassis03-fc3-1 chassis03-fc4-1
