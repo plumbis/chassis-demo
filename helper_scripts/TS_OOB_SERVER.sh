@@ -60,8 +60,8 @@ auto eth0
 iface eth0 inet dhcp
     alias Connects (via NAT) To the Internet
 
-auto eth1
-iface eth1
+auto swp1
+iface swp1
     alias Faces the Internal Management Network
     address 192.168.0.254/24
 
