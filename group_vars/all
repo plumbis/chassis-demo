@@ -13,7 +13,6 @@ fabriccards:
                    fp22, fp23, fp24, fp25, fp26, fp27, fp28, fp29, fp30, fp31]
 
 leafs:
-    server_ports: ["swp1", "swp2"]
     fabric_ports: ["swp51", "swp52", "swp53", "swp54"]
 
 node:
@@ -23,6 +22,7 @@ node:
                 ipv4: "10.0.0.1/32"
         bgp:
             asn: 65011
+            server_ports: ["swp1"]
 
     leaf02:
         interfaces:
@@ -30,6 +30,7 @@ node:
                 ipv4: "10.0.0.2/32"
         bgp:
             asn: 65012
+            server_ports: ["swp2"]
 
     leaf03:
         interfaces:
@@ -37,6 +38,7 @@ node:
                 ipv4: "10.0.0.3/32"
         bgp:
             asn: 65013
+            server_ports: ["swp1"]
 
     leaf04:
         interfaces:
@@ -44,6 +46,7 @@ node:
                 ipv4: "10.0.0.4/32"
         bgp:
             asn: 65014
+            server_ports: ["swp2"]
 
     leaf05:
         interfaces:
@@ -51,6 +54,7 @@ node:
                 ipv4: "10.0.0.5/32"
         bgp:
             asn: 65015
+            server_ports: ["swp1"]
 
     leaf06:
         interfaces:
@@ -58,6 +62,7 @@ node:
                 ipv4: "10.0.0.6/32"
         bgp:
             asn: 65016
+            server_ports: ["swp2"]
 
     server01:
         interfaces:
