@@ -3,7 +3,7 @@
   become: yes
   tasks:
   roles:
-    - global_common
+    - network_common
     - linecard_common
     - network_netq
   handlers:
@@ -12,7 +12,7 @@
 - hosts: fabriccards
   become: yes
   roles:
-    - global_common
+    - network_common
     - fabriccard_common
     - network_netq
   handlers:
@@ -21,7 +21,7 @@
 - hosts: leafs
   become: yes
   roles:
-    - global_common
+    - network_common
     - leaf_common
     - network_netq
   handlers:
