@@ -124,14 +124,13 @@
 
 - name: Copy FRR daemons File
   copy:
-    src: configurations/{{ansible_hostname}}/daemons
+    src: daemons
     dest: /etc/frr/daemons
 
 - name: Copy FRR configuration
   template:
     src: frr.j2
     dest: /etc/frr/frr.conf
-    backup: yes
   register: new_frr_config
 
 - name: Deploy ROH Container
