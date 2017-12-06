@@ -22,7 +22,7 @@ node:
                 ipv4: "10.0.0.1/32"
         bgp:
             asn: 65011
-            server_ports: ["swp1"]
+            server_ports: ["swp1", "swp2"]
 
     leaf02:
         interfaces:
@@ -30,7 +30,7 @@ node:
                 ipv4: "10.0.0.2/32"
         bgp:
             asn: 65012
-            server_ports: ["swp2"]
+            server_ports: ["swp1", "swp2"]
 
     leaf03:
         interfaces:
@@ -38,7 +38,7 @@ node:
                 ipv4: "10.0.0.3/32"
         bgp:
             asn: 65013
-            server_ports: ["swp1"]
+            server_ports: ["swp1", "swp2"]
 
     leaf04:
         interfaces:
@@ -46,7 +46,7 @@ node:
                 ipv4: "10.0.0.4/32"
         bgp:
             asn: 65014
-            server_ports: ["swp2"]
+            server_ports: ["swp1", "swp2"]
 
     leaf05:
         interfaces:
@@ -54,7 +54,7 @@ node:
                 ipv4: "10.0.0.5/32"
         bgp:
             asn: 65015
-            server_ports: ["swp1"]
+            server_ports: ["swp1", "swp2"]
 
     leaf06:
         interfaces:
@@ -62,7 +62,7 @@ node:
                 ipv4: "10.0.0.6/32"
         bgp:
             asn: 65016
-            server_ports: ["swp2"]
+            server_ports: ["swp1", "swp2"]
 
     server01:
         interfaces:
