@@ -9,7 +9,7 @@ service integrated-vtysh-config
 !
 log syslog informational
 !
-{% for interface in leafs["bgp"]["server_ports"] -%}
+{% for interface in bgp["server_ports"] -%}
 interface {{interface}}
  ipv6 nd ra-interval 10
  no ipv6 nd suppress-ra
@@ -30,7 +30,7 @@ router bgp {{ bgp["asn"] }}
 {% for interface in leafs["fabric_ports"] -%}
  neighbor {{interface}} interface peer-group FABRIC
 {% endfor -%}
-{% for interface in leafs["bgp"]["server_ports"] -%}
+{% for interface in bgp["server_ports"] -%}
  neighbor {{interface}} interface peer-group SERVERS
 {% endfor -%}
  !
