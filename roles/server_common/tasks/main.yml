@@ -142,7 +142,7 @@
     restart_policy: unless-stopped
     tty: true
     recreate: yes
-    image: cumulusnetworks/frr:latest
+    image: cumulusnetworks/frrouting:latest
     volumes:
       - "/etc/frr/daemons:/etc/frr/daemons"
       - "/etc/frr/frr.conf:/etc/frr/frr.conf"
