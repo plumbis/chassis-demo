@@ -31,7 +31,6 @@
   become: yes
   roles:
     - server_common
-    - server_netq
   handlers:
     - include: handlers/main.yml
 
