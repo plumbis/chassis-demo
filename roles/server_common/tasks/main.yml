@@ -75,11 +75,11 @@
   when: netq_started.changed
 
 - name: Add netq server IP
-  command: netq config add server 192.168.0.254
+  command: netq config add server {{netq.server}}
   when: netq_started.changed
 
 - name: Restart NetQ Agent
-  command: netq config agent restart
+  command: netq config restart agent
   when: netq_started.changed
 
 - name: Add Docker settings to NetQ
@@ -92,7 +92,7 @@
   register: netq_docker
 
 - name: Apply NetQ Docker Settings
-  command: netq config agent restart
+  command: netq config restart agent
   when: netq_docker.changed
 
 - name: Start Docker
@@ -132,6 +132,7 @@
     src: frr.j2
     dest: /etc/frr/frr.conf
     backup: yes
+  register: new_frr_config
 
 - name: Deploy ROH Container
   docker_container:
