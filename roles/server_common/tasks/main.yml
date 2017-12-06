@@ -1,8 +1,9 @@
 ---
-- name: Copy Interface Config
-  copy:
-    src: configurations/{{ansible_hostname}}/interfaces
+- name: Copy interfaces configuration
+  template:
+    src: interfaces.j2
     dest: /etc/network/interfaces
+    backup: yes
   register: reboot
 
 - name: Correct LLDP Settings
@@ -115,21 +116,22 @@
     - eth2
     - lo
 
-- name: Create Quagga configuration directory
+- name: Create FRR configuration directory
   file:
-    path: /etc/quagga
+    path: /etc/frr
     state: directory
     mode: 0775
 
-- name: Copy Quagga daemons File
+- name: Copy FRR daemons File
   copy:
     src: configurations/{{ansible_hostname}}/daemons
-    dest: /etc/quagga/daemons
+    dest: /etc/frr/daemons
 
-- name: Copy Quagga configuration File
-  copy:
-    src: configurations/{{ansible_hostname}}/quagga.conf
-    dest: /etc/quagga/Quagga.conf
+- name: Copy FRR configuration
+  template:
+    src: frr.j2
+    dest: /etc/frr/frr.conf
+    backup: yes
 
 - name: Deploy ROH Container
   docker_container:
@@ -140,7 +142,7 @@
     restart_policy: unless-stopped
     tty: true
     recreate: yes
-    image: cumulusnetworks/quagga:latest
+    image: cumulusnetworks/frr:latest
     volumes:
-      - "/etc/quagga/daemons:/etc/quagga/daemons"
-      - "/etc/quagga/Quagga.conf:/etc/quagga/Quagga.conf"
+      - "/etc/frr/daemons:/etc/frr/daemons"
+      - "/etc/frr/frr.conf:/etc/frr/frr.conf"
